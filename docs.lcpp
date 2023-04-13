@@ -1,0 +1,778 @@
+//comments '//' '/**/' :
+	//same as in the programming language called 'C'
+	//comment
+	/*
+		multiline
+		comment
+	*/
+//white space is not used as syntax except for separating sertain symbols.
+//keywords & symbols :
+	( @ ) > \ λ $ :: < = , == === => <= . <=> { } ¬ [ ] # ; " " : ?
+//blocks
+()//context
+[]//array
+{}//object
+
+//patterns :
+	//note I am using '+' like the regex symbol. '+' = 'at least 1'
+	//syntax pattern names:
+		expression
+		longExpression
+		param
+		params
+		label
+		number
+		string
+		property
+		type
+	//param
+		//word or symbol with an optional type
+		
+	//params:
+		//a list of param separated by spaces and/or ','s
+		param
+		params param
+	//longExpression:
+		 //list of expressions
+		expression
+		longExpression expression
+	//label:
+		//a value defined somewhere else
+		//references a parameter or a defined value
+	//property
+		//expression followed be a list of labels
+		expression . label
+	//type
+		()
+		[]
+		(@)
+		""
+		(#)
+		label
+		{params}
+		[type+]
+	//assignment
+	//expression:
+		label
+		( longExpression )
+		longExpression expression
+		param > longExpression
+		[ params ] > longExpression
+		{ params } > longExpression
+		param :: param > longExpression
+		[ params ] :: param > longExpression
+		{ params } :: param > longExpression
+		param ? > longExpression
+		[ params ] ? > longExpression
+		{ params } ? > longExpression
+		param :: param ? > longExpression
+		[ params ] :: param ? > longExpression
+		{ params } :: param ? > longExpression
+		λ longExpression
+		\ longExpression
+		? λ longExpression
+		$ number
+		number
+		longExpression expression :: expression
+		longExpression < $ number
+		longExpression < label
+		longExpression < label $ number
+		property
+		param = longExpression
+		param => longExpression
+		param <= longExpression
+		param <=> longExpression
+		param ? = longExpression
+		param ? => longExpression
+		param ? <= longExpression
+		param ? <=> longExpression
+		property = longExpression
+		property => longExpression
+		property <= longExpression
+		property <=> longExpression
+		property ? = longExpression
+		property ? => longExpression
+		property ? <= longExpression
+		property ? <=> longExpression
+		longExpression ,
+		, longExpression
+		longExpression , longExpression
+		( params )>
+		( params )=
+		( params )<=
+		( params )<=>
+		expression : type
+		()
+		longExpression == expression
+		longExpression === expression
+		{}
+		{ longExpression }
+		¬ label
+		longExpression ¬ label expression
+		[]
+		[ longExpression ]
+		# keyword longExpression ;
+		# longExpression
+		( @ longExpression )
+		"string"
+
+
+//lambdas '>' , 'λ' , '(a)' , 'a' :
+	//basic lambda calculus:
+		//'>' declars a single argument function;
+		//functions can be called by using the 'function argument' paturn
+		//expressions can separated using brackets '()', which also help with scoping (but that's for another section)
+		//everything after a lambda '>' is part of said lambda
+		//e.g.
+		f>x> f (f a>a x) (a>b>x (x a)) x
+	//A lambda function can be made using the 'a >' paturn or the 'λ' paturn
+	//pattern 'a >' :
+		//'>' is just like arrow functions '=>' in javascript.
+		//They have 1 parameter on the left and when, called evaluate the expression on the right
+		//Expressions are evaluated just like normal lambda calculus 
+		//e.g.
+			a > a a //Y combinator
+			f > x > f(f) 
+	
+
+	//'λ' , '\' and pattern '$ 3' :
+		//Syntax similar to the De_Bruijn_index is also supported
+		//https://en.wikipedia.org/wiki/De_Bruijn_index
+		//This can be done using the 'λ' and '$3' patterns.
+		//The only difference from De_Bruijn_index is that we count from 0 and put a '$' before the number.
+		//e.g.
+			λλ$0 //false
+			\λ$1 //true
+			λ λ $ 1($1($ 1 $ 0)) //3
+		//'λ' and '\' :
+			//about '\' :
+				//'\' is interchangable with 'λ'
+				//'\' may be used instead of 'λ' as it is easier to find on keyboards.
+			//'λ' is an alternative to using '>'.
+			//'λ' acts almost like '>'. The only difference is that 'λ' does not have a named parameter.
+			//i.e. you can use 'λ' instead of 'a >'
+			//e.g.
+				a>λ a //true
+				a>b>a //true
+				λ b>b //false
+				a>b>b //false
+		//'$' :
+			//The parameters in '>' and 'λ' can be referenced via index using indexing.
+			//'$3' is the paturn for lambda indexing.
+			//parameter indexes are made up of s '$' followed by a number.
+//Integers '2' :
+	//Integer literals can be used.
+		//e.g.
+			123
+			5
+			3 (x>bool>bool (a>a a) x) (a>a)//makes an array of 3 Y combinators
+	//Can also use 0x and 0b to make integers
+		//e.g.
+			0x123
+			0b1101
+	//They can be use\d as church numerals, (which can be used for iteration)
+	//It is possible to convert regular lambda functions to Integers.
+		//This may be desirable since integers run faster:
+			//They don't take up as must stack space, since they use iterasion instead of recursion.
+			//and can have inbuilt optimisations
+	//Integers is it's own data type although they are meant to look like normal lambda functions.
+	//regular lambda functions can be converted into integers by taking advantage of the recursion system.
+	//e.g.
+		(non_int>(v::r>r)(a>a)::non_int) //converts input to an integer
+//recursion '::' :
+	//about max recursion:
+		//1. Every function call has an associated max recursion.
+		//2. The max recursion of a function call must be known before it is called.
+		//3. The max recursion belongs to the piece of source code itself. This is since the amount of source code is finite.
+		//4. The max recursion can only be decreased unless there is no max recursion set.
+		//5. The amount of times a function recurs can worked out by looking at the callstack.
+		//6. If a function call would result in it recuring more than allowed, then it returns an empty context '()'.
+	//These restrictions exist so that functions always hault.
+	//pattern 'a :: r' :
+		//This is the recursion pattern.
+		//Both 'a' and 'r' are single expressions.
+		//'r' sets the maximum amount of times this piece of code is allowed to recur.
+		//By default 'r' == 1
+			//e.g.
+			(a> a a)
+			//is the same as
+			(a> a a::1)
+		//'a' must be argument
+			//e.g.
+			(a>a::4 a) //here the '::4' does not affect it
+		//if 'r' isn't a number then the value is converted into a number.
+			//This is done by calling the lambda with an increment function and the number 0.
+			//This would convert a church numeral into an Integer, which it is used.
+			//e.g.
+			(a>a a::(inc>zero>inc(inc(0))))
+			//If after this the result still isn't an integer value, then it returns 0 and the lambda won't be called.
+	//pattern 'a :: r >'
+		//Here 'a' and 'r' are parameters in the same function.
+		//'a' is the normal function.
+		//'r' is the recursion value passed in. If no 'a::r' pattern was used to call the function, then it returns then 'r' would be '1'. 1 is the default max recursion.
+		//Note that 'r' is not the actuall max recursion of the function but is the value number gotten from the 
+	//e.g.
+		(//factorial
+			(multiply> is0> Y> increment> decrement>
+				n>
+					(Y factorial>
+						//main funtion starts here
+						n::r>
+							is0 n 
+								1
+								multiply n (factorial factorial (decrement n) :: (increment n))
+					)
+			)
+			//set up constants
+			(a>b> f>x> a (b f) x) //multiply
+			(n> n (λ λλ$0)(λλ$1)) //'is0' aka 'x == 0'
+			(a> a a) //Y combinator
+			(n> f>x> f(n f x)) //increment
+			(n> f>x> n(a> b> b (a f)) (a> x) (a> a)) //decrement
+		)
+//return/break '<' :
+	//patterns '<a' and '<$3':
+		//returns to the scope of the orresponding parameter.
+		//It returns the value of the expression before it. To that scope.
+		//It can be used to break out of functions early
+		//If a return pattern is used as an argument it is triggered and it returns.
+		//e.g.
+			a> (b> a) a
+			//is the same as
+			a> (b> a <a) a
+			//is the same as
+			a> (b> a <a$0) a
+			//is the same as
+			λ (λ $1 <$1) $0
+			//is the same as
+			λ λ $1 <$1 $0
+	//pattern '<a$3':
+		//same as '<a' except it continues to go out '$3' number of times.
+		//One use for this is returning from a lambda function entirly
+		//e.g.
+		a> 5 (x>3<a$1) a>a //always returns 3 
+//assignment '=' , '()' , ',' :
+	//',' :
+		//',' can be used to group things similar to '()'.
+		//','s can be used to get back to the local '()' level.
+		//It can be used to exit '>' and '='
+		//In some cases it can be used instead of '()'
+			//e.g.
+				(foo1> arg1> foo2> arg2> (a>b> foo1 arg1,foo2 arg2))
+			//is the same as
+				(foo1> arg1> foo2> arg2> ((a>b>foo1 arg1)(foo2 arg2))
+			//e.g.
+				(a>A>b>B>c>C>a A a,b B b,c C)
+			//is the same as
+				(a>A>b>B>c>C>(a A a)(b B b)(c C))
+		//Note: it is pointless to put this on the last expression
+			//e.g.
+				(a> a a ,a)
+				//is the same as
+				(a> a a (a))
+				//is the same as
+				(a> a a a)
+		//e.g.
+			(a> b> f>x> a, b f x) //add
+			(a> a a (a, a a) a, a a)
+	//pattern 'a =' :
+		//Similar to haskell, constants can be assigned using the 'a =' pattern, where 'a' is a label for a constant.
+		//Also similar to haskell labels can be used before they are defined 
+			//e.g.
+				(a a,a=a>a)
+		
+		//errors:
+			//loops of label definitions are not allowed:
+				//e.g.
+					(
+						a = b, //recursive reference ERROR: 'a', 'b' are in a definision loop
+						b = a,
+					)
+			//self referencing is also not possible with this
+				//e.g.
+					(//assume this is global scope
+						a = a //ERROR: 'a' is not declared
+					)
+		//If the same value is defined multiple times then it uses the most recent one
+			//e.g.
+				(a,a=1,a,a=2,a)
+				//is the same as
+				(1 1 2 a = 2)
+		//Just like '>' and 'λ', everything on the right side is part of the assignment, excluding ')' and ','
+		//The new label can be used anywhere in side the same '()'
+		//Labels cannot reference themselves in their definision.
+			//e.g.
+			(a = a) //ERROR 'a' is not defined
+			//Instead, Y combinator can be used for self referencing.
+		//Note that the 'a =' pattern is ignored from the final code, and so can be put in the middle of lambda expressions without affecting them
+		//Note using multiple 'a =' without ',' is possible:
+			//multiple values can be assigned 
+			//e.g.
+				(((add > add a b) b = 2) a = 1)
+		//e.g.
+			(four (a>b>b a a) four = 2 2)
+			(true = a> b> a)
+	//'()' :
+		//This pattern is also known as a context or a block scope.
+		//Contexts can contain a single main lambda function and labels inside it.
+		//If no lambda is pressent then the context will through an error if it is called.
+			//e.g.
+				() a>a //ERROR cannot call a context
+		//They can contain their own labels.
+		//These scopes are also made by other patterns such as 'a = ...' and 'a> ...'
+			//e.g.
+			const_four = (a>b b) b=2,//Here the 'b' value only exists inside the context of the first '='.
+			//is the same as
+			const_four = ((a>b b) b=2),
+		//e.g.
+			(a = 2, a> a, b = 3, a)//Y combinator with 2 extra labels
+			(a = 2,\ a b,b = 3)
+			square = (x> two =  = x)
+	//using the syntax together we can make block scopes
+		//e.g.
+			(
+				a = 2,
+				b = a,
+				a = pow a 3,
+				a = add a b,
+				(n> a n),
+				add = a>b>f>x> (a f, b f x),
+				pow = a>b>b a,
+			)
+//equallity '==' , '===' :
+	//'==' :
+		//checks if 2 lambdas as combinators are the same. Also checks types
+		is0 = n>n==0,
+	//'===': checks if 2 lambdas are the same reference.
+	//can be used to check to see where a lambda comes from.
+
+//assignment types '<=>' '.' :
+	//Operator choices '<=' '<=>' '=>':
+		//These are notes to help remember which operator does what.
+		//The '=>' arrows point towards the value that is added to the blocks return value.
+		//'a <= b' adds the property 'a' to the final value, because it points towards the label.
+		//'a => b' adds expression 'b' as an argument onto the final value, because it points towards the expression.
+		//'a <=> b' adds both the label 'a' and the expression 'b' because it points to both.
+	//'=>' use and define
+		//e.g.
+			(a => 2)
+			//is the same as
+			(a = 2, a)
+	//'.' dot operator
+		//Gets property or index.
+		//patterns '.b' and '.( )'
+			//- takes in the expression on the left and returns a function that returns.
+			//- If a property does not exist then the empty context '()' is returned.
+			//- 'b' can be a number litteral or a word.
+			//- In the '.( )' pattern, the brackets contain a long expression.
+		//assigning properties:
+			//When a property is assigned to, the change only applies within the scope.
+			//This prevents side-effects.
+		//pattern '.b' or '.2' :
+			//pseudocode code for dot operator
+				//e.g.
+					(b<=2).b,//returns 2
+					//is the same as the pseudocode
+					(b<=2)¬."b",
+					//goes to the pseudocode
+					getProperty (b<=2) "b",
+			//can also be used for indexes
+				[11 22 33].1 //2
+		//pattern '.( )' :
+			//Used for indexing arrays
+				//e.g.
+					number = 2,
+					[11 22 33].(number),// 33
+					getArrayIndex = array>index>array.(index),
+			//Using the '.( )' pattern, the property can be decided when it is evaluated.
+				//e.g.
+					getProperty = obj>name>obj.(name),
+					setProperty = obj>name>(obj,(name)),
+			//Can also be used to make hidden properties that can only be referenced with the same lambda or object reference :
+				//e.g.
+					hideProperty = obj>key>value>obj.(key) = 
+	//'<=' define public label
+		//e.g.
+			obj = (a<=2),
+			obj.a,//2
+		//public labels are assigned to the output of a block
+			//e.g.
+			foo = (a>a a,a<=2),
+			foo.a,//2
+			foo 3,//27 (because 3^3=3*3*3=27)
+	//'<=>' use & define public label
+		//e.g.
+			two = number <=> 2,
+			twoSquared = two two.number,
+//floats '0.0' :
+	//Can use decimal literals:
+		//e.g.
+			1.3
+			-1.4
+	//If used as a function they are rounded down and are used as iterators, just like integers.
+		//negative numbers become 0
+		//e.g.
+			f > x > 2.3 f x
+			//is the same as
+			f > x > 2 f x
+		//e.g.
+			f > x > -2.3 f x
+			//is the same as
+			f > x > 0 f x
+	//floats have methods for doing calculations with them
+		//methods:
+			0.0.+
+			0.0.-
+			0.0.*
+			0.0./
+			0.0.**
+			0.0.atan2
+			0.0.clamp
+		//properties
+			0.0.++
+			0.0.--
+			0.0.sin
+			0.0.cos
+			0.0.tan
+			0.0.asin
+			0.0.acos
+			0.0.atan
+			0.0.exp
+		//constants
+			0.0.prototype//contains all the operations as raw functions.
+		//e.g.
+			1.0.+4.2,
+			
+	//Converting the following values into integers will return 0:
+		//Infinity,
+		//-Infinity,
+		//NaN,
+		//-0,
+		//+0,
+	//Allows for doing calculations with negative and non-integer numbers.
+	//e.g.
+//objects '{}' :
+	//'{}' can be used for grouping values into existing single expressions
+	//pattern '{a}' :
+		//Unlike '()' The first label in a expression is not used as a function.
+			//Instead, by default, labels are used as public property names.
+			//The property takes on the value of the label with the same name.
+				//e.g.
+					(
+						a = 1, b = 2,
+						(
+							c = 3,
+							{a b c},
+						)
+					)
+					//is the same as
+					(
+						a = 1, b = 2,
+						(
+							c = 3,
+							(a<=a, b<=b, c<=c),
+						)
+					)
+	//Apart from this exp they act just like a '()' block.
+	//e.g.
+		(
+			A = 1, B = 2, C = 3,
+			{A B C},
+		),
+		(
+			obj = {a<=4,b<=5,c<=6},
+			obj . a,//4
+			obj . b,//5
+		),
+		{1 2 3} . (2 1),
+		(
+			Number = int>{number<=int,()},
+		),
+//a functional OOP :
+	//Can be used for OOP
+	//Objects are still imutable.
+	//Mutating an object returns the same object with the mutated value
+	//inheritence:
+		//
+	//pollymorphism:
+//operators '¬' :
+	//pattern '¬a' 2 arg operator label
+		//e.g.
+			(
+				add = a>b> f>x>(a f, b f x),
+				4 ¬add 3, //7
+			)
+			2¬>4,//false
+			2¬<4,//true
+	//Since most non-syntax symbols can be used as parameter names, this can be used to make infix operations
+		//e.g.
+		(
+			+ = a>b>
+				(
+
+					f>x>a f (b f x)
+				)
+			,
+			4 ¬+ 2, // 6
+		)
+//arrays '[]':
+	//pattern '[ ]' :
+		//Works similar to a '()' block except the first expression isn't used as a function.
+		//Instead all expressions are joined together into an array.
+			
+		//Calling array as a function converts the argumnet into an array (calling 'arg.toArray ()') then concatnates the 2 arrays
+			//e.g.
+				[] (a>a) 2 3
+				//returns
+				[a>a, 2 3]
+			//e.g.
+				[1 2] [3 4]
+				//returns
+				[1 2 3 4]
+			//e.g.
+				[1 2] [[3 4] 5]
+				//returns
+				[1 2 [3 4] 5]
+	//Arrays are it's own datatype.
+	//Arrays have the array properties as pecified later on
+	//note:
+		[a b c]
+	//e.g.
+		[1 2 3]
+		[1 [2 3] 4]
+		[1] [2] [3]
+		push = array > item > newArray => array [item],
+//meta&non-meta '#' '@' '""' '[]' :
+	//pattern '# ... ;' , '#( ... )' , '(# ...)':
+		//end with a ';', an appropriate closing bracket or contains a single bracket.
+			//These brackets can be of any kind.
+			//The 
+		//Defines a meta block.
+		//The functional syntax applies in these blocks.
+	//array types [], "", '@':
+	//';':
+		//';' is similar to ',' except ';' also exits all '#' and '@' scopes, into the local blacket scope.
+	//strings '"a"' :
+		//similar properties to an array
+	//pattern '@ ... ;' , '(@ ...)' :
+
+		//Defines a block of non-meta code.
+		//The block is then stored as a tree (similar to '[]') containing non-meta values.
+		//Since the syntax tree system is the same with the meta code, all the white space is removed (i.e. abstracted away), and is added back towards the end of compilation.
+		//These non-tree values are similar to strings
+		//Default white space rules for (@).toString():
+			//- Spaces are added between everything.
+			//- New lines are added after every ';'
+		//'@', '$', '#' can be done as non-meta code by using '\@','\$','\#'.
+	//concatnation rules:
+		//If 2 non-meta blocks are joined together then extra white space may be added to make sure words & symbols don't join.
+		//otherwise If a string is joined with a non-meta block or another string, then no extra white space is added to the final code.
+		//The resulting type os the same as the type of the function (string or non-meta block) being called.
+	//properties:
+		//length
+		//depth:
+			//Returns the recursion depth of a tree.
+			//Always returns 1 for a string.
+	//array methods:
+		//reduce
+		//map
+		//mapRecur
+		//toArray:
+			//converts assembly to a array tree
+			//converts string to a list of strings of length 1
+		//toString
+		//toAssembly:
+			//can convert array trees or parse strings into assembly syntax trees
+		//group:
+			//e.g.
+			["a" "A" "," "b" "B" "," "c" "C"].group ","// [["a" "A"] "," ["b" "B"] "," ["c" "C"]]
+			//same as
+			("", (@a a,b B,c C).group ",") //
+		//split
+		//splice
+		//flat
+//array/object parameters '[ ]>' '{ }>' :
+	//pattern '[a b c]>'
+		//e.g.
+			[1 2 3].map [v i]>i v,
+	//pattern '{a b c}>'
+		({a}>a a){a=2,b=3}
+	//allows a function to take in parameters from an array or object
+	//This functionality could be done without using this syntax
+		//e.g.
+		[1 2 3].map (a>(v>i>i v)a[0] a[1]),
+//array/object assignment '[ ]=' '{ }=' :
+	//pattern '[a b] = '
+		//e.g.
+			[a b] = [1 3],
+			//is the same as
+			a = [1 3].0,
+			b = [1 3].1,
+	//
+	//assigns multiple labels at once.
+	//In the case where the appropriate datatype is not provided, or the properties/indexes don't exist on the array/object, then the labels are assigned the null value '()' aka empty context.
+		//e.g.
+		[a] = [],//a == ()
+		[a] = (a>a),//a == ()
+		{a b} =(a<=1,b=2),//b == ()
+	//e.g.
+		[a b] = [1 3].map [v]>f>x>f(v f x),
+//using & with:
+	//using '( )>' :
+		//"using" functions are special functions that can not use any parameters or labels defined outside them.
+		//The only outside labels that can be used are the ones given to them inside the '( )' part of the '()>'
+		//pattern '(a b c)>' : 
+			//These functions have an unnamed parameter similar to 'λ'.
+			//They are useful for making functions even more contained or limiting what mutable values are allowed inside a function
+			//e.g.
+				(a> b> (a)> a, b)
+				(a?> b?> (b)>b)
+	//with '( )=':
+		//note this pattern can not come after a '.' since what would conflict with the 'a.(b)' syntax.
+		//Gets all the properties of the objects in the '( )' and uses them as local values in the inner scope.
+		//pattern '( )= ' :
+			//e.g.
+				((a<=1,b<=2,+<=a>b>f>x>a f (b f x)))= + a b,
+		//The source of all non-property labels should be known at 'label compile time'
+			//all the labels definitions and references throughout the entire program are worked out before any functions are evaluated.
+			//An error will be thrown if the input to a with pattern is not knowable before any lambdas have been evaluated.
+			//This means that the following cannot be put inside a with pattern:
+				//1. lambda parameters
+			//e.g.
+				(
+					a>
+						(a)=f>x>x//reference ERROR: label 'a' references an object that is not known before the lambda evaluation phase.
+				),
+				(
+					a> b>
+						foo = (a a,b<=2),
+						(foo)=f>x>x,//this still throws a similar error since 'foo' uses properties in 'a' that are not known before lambda evaluation phase
+				),
+				(
+					a> b>
+						foo = (\a a,b<=2,c<=3),
+						(foo)=f>x>x,//This is legal code since all the properties of foo ('b' and 'c') are knowable even without knowing the values of parameters 'a' and 'b'.
+				),
+		//Alternatively '( )<=' can be used to make all the labels public and assign them to the final expression.
+			//This one does not have the error that comes with '( )=' as it's properties are not evaluated before the expression is.
+			//This can be used to join objects together
+				//e.g.
+					joinObjects = objA>objB> (objB)<=objA
+			//e.g. 
+		//e.g.
+			(+>
+				obj = (a<=1,b<=2,c<=3),
+				(obj) = b ¬+ c, //5
+				(obj) <= a>a a, //(a>a a a<=1,b<=2,c<=3)
+			)(a>b>f>x>a f (b f x)),
+			(
+				obj = (
+					{a b c},
+					a<=1,
+					b<=2,
+					c<=3,
+				),
+				(obj)<=λ$0 b c,//([a b c]<=[1 2 3],λ$0 b c)
+				(obj)= λ$0 b c,//(λ$0 2 3)
+			),
+		//the two types of blocks can be combined with '( )=>' and '( )<=>'
+//type annotations ':' :
+	//using ':' symbol
+	//Can be put a type annotation infront of a pattern to make sure labels and expressions have sertain types.
+	//pattern ': type'
+		//e.g.
+	//basic types:
+		//array '[]'
+		//lambda 'λ'
+		//context '{}''
+		//string '""'
+		//assembly block '(@)'
+		//meta block '#'
+		//number '0'
+	//e.g.
+		a:{} = {prop <= f>x>f(f x)};
+//impure patterns '?' :
+	//mutable '?':
+		//The patterns used for mutations are:
+			//'a ? =' : Making a mutable object.
+			//'a?>' or '?λ' : A function that allows mutating properties.
+			//mutating 'a.b ? =' : Actuall mutating of existing properties.
+		//note: 'a.( ) ? = ' : is allowed and mutates existing properties.
+		//Mutating: can not be used inside a pure function. Can only be used in global or scopes that allow mutating objects.
+			//e.g.
+
+		//In order to mutate something both the mutator and the mutatee must both allow for mutations.
+		//Rule: Once inside a pure function the state is set and even calling mutable functions doesn't change the state in the pure one.
+		//'#' and global scopes are impure by default.
+		//Note: properties can be mutated not labels directly
+		//Note: new mutable properties are NOT allowed to be added using the mutable operator.
+		//e.g.
+			#(
+				a ? = {b=2},
+				? \ (
+					getFoo = a?>a.b,
+					getFoo,//returns 2
+					a.b?=3,
+					getFoo,//returns 3
+				)
+				\(
+					,
+					a.b?=3
+				)
+			)
+//blocks types :
+	(1 2 3), //normal block
+	[1 2 3], //array block
+	{a=1,b=2,c=3} //object block
+//tests
+	#helloWorld = (
+		print (@r0)(λλ$1) "hello world",
+		print = reg>regIs0>str> (
+			regIs0 (reg (@ = 0;))"",
+			str.map [v]>(@send)reg v,(@;)
+		),
+		(
+			print = print(@r0)0,
+			print "hello world",
+		),
+		(λ@let print(reg,is0,str){
+			repeat !!is0:%reg=0;
+			let i=0;
+			repeat {@;
+				send %reg str.(i);
+				#i+=1;
+			}
+		})
+	);
+	#var = (
+		a>a a,
+		(self_class>
+			self = self_class self_class,
+			static>λ(self, static @0)
+		),
+	);
+	#classes=(
+		Y = a>a a,
+		new = Y,
+		vec2 = new Vector2>(//Vector2:Class
+			x>y>(//
+				vec2 = new Vector2,
+				get <= (
+					x <= x,// main λλ$1,
+					y <= y,// main λλ$0,
+					main => main λλ$1,
+				),
+				set <= (
+					x <= v>vec2 v y,// main λλ$1,
+					y <= v>vec2 x v,// main λλ$0,
+					main => main λλ$0,
+				)
+				main => get_set>x_y>
+					get_set
+						(x_y x y)
+						(x_y (val>vec2 val y) (val>vec2 x val))
+				,
+			),//[get=>[x y] set=>[x y]]
+		),
+		vec2 1 2
+	);
