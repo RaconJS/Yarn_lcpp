@@ -1,3 +1,4 @@
+//NEED_UPDATE UNFINISHED
 //comments '//' '/**/' :
 	//same as in the programming language called 'C'
 	//comment
@@ -131,8 +132,10 @@
 		//They have 1 parameter on the left and when, called evaluate the expression on the right
 		//Expressions are evaluated just like normal lambda calculus 
 		//e.g.
-			a > a a //Y combinator
-			f > x > f(f) 
+			a > a a //Y_ish combinator
+			f > x > f(f x) // 2
+			f > (f(x x))(f(x x))// Y combinator
+
 	
 
 	//'λ' , '\' and pattern '$ 3' :
@@ -165,7 +168,7 @@
 		//e.g.
 			123
 			5
-			3 (x>bool>bool (a>a a) x) (a>a)//makes an array of 3 Y combinators
+			3 (x>bool>bool (a>a a) x) (a>a)//makes an array of 3 Y_ish combinators
 	//Can also use 0x and 0b to make integers
 		//e.g.
 			0x123
@@ -213,9 +216,9 @@
 		//Note that 'r' is not the actuall max recursion of the function but is the value number gotten from the 
 	//e.g.
 		(//factorial
-			(multiply> is0> Y> increment> decrement>
+			(multiply> is0> Y_ish> increment> decrement>
 				n>
-					(Y factorial>
+					(Y_ish factorial>
 						//main funtion starts here
 						n::r>
 							is0 n 
@@ -226,7 +229,7 @@
 			//set up constants
 			(a>b> f>x> a (b f) x) //multiply
 			(n> n (λ λλ$0)(λλ$1)) //'is0' aka 'x == 0'
-			(a> a a) //Y combinator
+			(a> a a) //Y_ish combinator
 			(n> f>x> f(n f x)) //increment
 			(n> f>x> n(a> b> b (a f)) (a> x) (a> a)) //decrement
 		)
@@ -242,6 +245,8 @@
 			a> (b> a <a) a
 			//is the same as
 			a> (b> a <a$0) a
+				//or
+				a> (b> a<b$0 ) a //since the function returns after this point anyway.  
 			//is the same as
 			λ (λ $1 <$1) $0
 			//is the same as
@@ -251,6 +256,12 @@
 		//One use for this is returning from a lambda function entirly
 		//e.g.
 		a> 5 (x>3<a$1) a>a //always returns 3 
+	//exception: if the scope being returned to is not on the stack then a return "statement" will return from the lambda expression.
+		//i.e. The return operator will turn into a '<$1'.
+		//e.g.
+			λλ 1 <$2
+	//e.g.
+		o > o o :: o o < o //This specific example is here for artistic purpouses. However, it is also syntacticly correct.
 //assignment '=' , '()' , ',' :
 	//',' :
 		//',' can be used to group things similar to '()'.
@@ -303,7 +314,7 @@
 		//Labels cannot reference themselves in their definision.
 			//e.g.
 			(a = a) //ERROR 'a' is not defined
-			//Instead, Y combinator can be used for self referencing.
+			//Instead, Y_ish combinator can be used for self referencing.
 		//Note that the 'a =' pattern is ignored from the final code, and so can be put in the middle of lambda expressions without affecting them
 		//Note using multiple 'a =' without ',' is possible:
 			//multiple values can be assigned 
@@ -325,7 +336,7 @@
 			//is the same as
 			const_four = ((a>b b) b=2),
 		//e.g.
-			(a = 2, a> a, b = 3, a)//Y combinator with 2 extra labels
+			(a = 2, a> a, b = 3, a)//Y_ish combinator with 2 extra labels
 			(a = 2,\ a b,b = 3)
 			square = (x> two =  = x)
 	//using the syntax together we can make block scopes
@@ -360,11 +371,11 @@
 			(a = 2, a)
 	//'.' dot operator
 		//Gets property or index.
-		//patterns '.b' and '.( )'
+		//patterns '.b' and '.[ ]'
 			//- takes in the expression on the left and returns a function that returns.
 			//- If a property does not exist then the empty context '()' is returned.
 			//- 'b' can be a number litteral or a word.
-			//- In the '.( )' pattern, the brackets contain a long expression.
+			//- In the '.[ ]' pattern, the brackets contain a long expression.
 		//assigning properties:
 			//When a property is assigned to, the change only applies within the scope.
 			//This prevents side-effects.
@@ -378,19 +389,22 @@
 					getProperty (b<=2) "b",
 			//can also be used for indexes
 				[11 22 33].1 //2
-		//pattern '.( )' :
+		//pattern '.[ ]' :
 			//Used for indexing arrays
 				//e.g.
 					number = 2,
-					[11 22 33].(number),// 33
-					getArrayIndex = array>index>array.(index),
-			//Using the '.( )' pattern, the property can be decided when it is evaluated.
+					[11 22 33].[number],// 33
+					getArrayIndex = array>index>array.[index],
+			//Using the '.[ ]' pattern, the property can be decided when it is evaluated.
 				//e.g.
-					getProperty = obj>name>obj.(name),
+					getProperty = obj>name>obj.[name],
 					setProperty = obj>name>(obj,(name)),
 			//Can also be used to make hidden properties that can only be referenced with the same lambda or object reference :
 				//e.g.
-					hideProperty = obj>key>value>obj.(key) = 
+					hideProperty = obj>key>value>obj.[key] = 
+			//The code inside '.[ ]' is a normal scope and not an array scope
+				//e.g.
+					[1 2 3 4 5].[2 2]//returns '5' since '(2 2)' == '4'
 	//'<=' define public label
 		//e.g.
 			obj = (a<=2),
@@ -408,7 +422,8 @@
 	//Can use decimal literals:
 		//e.g.
 			1.3
-			-1.4
+			1.4
+			0xa3.fa
 	//If used as a function they are rounded down and are used as iterators, just like integers.
 		//negative numbers become 0
 		//e.g.
@@ -441,7 +456,7 @@
 		//constants
 			0.0.prototype//contains all the operations as raw functions.
 		//e.g.
-			1.0.+4.2,
+			1.0.+ 4.2,
 			
 	//Converting the following values into integers will return 0:
 		//Infinity,
@@ -484,7 +499,7 @@
 			obj . a,//4
 			obj . b,//5
 		),
-		{1 2 3} . (2 1),
+		{1 2 3} . [2 1],
 		(
 			Number = int>{number<=int,()},
 		),
@@ -495,26 +510,43 @@
 	//inheritence:
 		//
 	//pollymorphism:
-//operators '¬' :
-	//pattern '¬a' 2 arg operator label
+//operators:
+	//symbols
+		+ - * / ** %
+		& | ~ ^ >> << >>>
+		>= !=
+		! 
+		&& || ^^
+		<- -> <->
+	//Operators are special type of variable since they can be used for infix operations
+	//Different operators have different priorities for when they are evaluated.
+	//These operators are evaluated before any function calls
+	//Being labels they can be used as parameters.
+	//Operators have default values which are the operations one would expect in other languages
 		//e.g.
-			(
-				add = a>b> f>x>(a f, b f x),
-				4 ¬add 3, //7
-			)
-			2¬>4,//false
-			2¬<4,//true
-	//Since most non-syntax symbols can be used as parameter names, this can be used to make infix operations
-		//e.g.
-		(
-			+ = a>b>
-				(
-
-					f>x>a f (b f x)
+		//polyfill for 'add'
+		//note this code wouldn't work as self references for '(+)', can't be done directly.
+		+ = [floatA floatB]>(
+			a = floatA,
+			b = floatB,
+			a == () (b == () (+)(b > (+) [a b])) 
+			(b == () (a > (+) [a b]) 
+				(//a and b exist
+					//test for operator overloading
+					a.[+] ==
 				)
-			,
-			4 ¬+ 2, // 6
-		)
+			) 
+		),
+	//pattern 'a + b'
+	//e.g.
+		a + b,
+		(||>sub>|| 4,sub 5 2)(+)(-),//(4 + (5 - 2)) = 4 + 3 = 7
+		add_5 = +5,
+		add  = +,
+		3_sub_x = 3-,
+		hypot = a>b>a*a+b*b,
+		a * a + b * b
+//custom operators '¬=' : UNFINISHED
 //arrays '[]':
 	//pattern '[ ]' :
 		//Works similar to a '()' block except the first expression isn't used as a function.
@@ -619,20 +651,22 @@
 		[a b] = [1 3].map [v]>f>x>f(v f x),
 //using & with:
 	//using '( )>' :
+		//This pattern does not change how
+		//These are a type of lambda function, with unnamed parameters.
 		//"using" functions are special functions that can not use any parameters or labels defined outside them.
 		//The only outside labels that can be used are the ones given to them inside the '( )' part of the '()>'
 		//pattern '(a b c)>' : 
 			//These functions have an unnamed parameter similar to 'λ'.
 			//They are useful for making functions even more contained or limiting what mutable values are allowed inside a function
 			//e.g.
-				(a> b> (a)> a, b)
+				(a> b> (a b)> a, b)
 				(a?> b?> (b)>b)
 	//with '( )=':
-		//note this pattern can not come after a '.' since what would conflict with the 'a.(b)' syntax.
+		//note this pattern can not come after a '.' since what would conflict with the 'a.[b]' syntax.
 		//Gets all the properties of the objects in the '( )' and uses them as local values in the inner scope.
 		//pattern '( )= ' :
 			//e.g.
-				((a<=1,b<=2,+<=a>b>f>x>a f (b f x)))= + a b,
+				((a<=1,b<=2,+<=a>b>f>x>a f (b f x)))= (+) a b,
 		//The source of all non-property labels should be known at 'label compile time'
 			//all the labels definitions and references throughout the entire program are worked out before any functions are evaluated.
 			//An error will be thrown if the input to a with pattern is not knowable before any lambdas have been evaluated.
@@ -660,9 +694,9 @@
 					joinObjects = objA>objB> (objB)<=objA
 			//e.g. 
 		//e.g.
-			(+>
+			(add>
 				obj = (a<=1,b<=2,c<=3),
-				(obj) = b ¬+ c, //5
+				(obj) = add b c, //5
 				(obj) <= a>a a, //(a>a a a<=1,b<=2,c<=3)
 			)(a>b>f>x>a f (b f x)),
 			(
@@ -697,7 +731,7 @@
 			//'a ? =' : Making a mutable object.
 			//'a?>' or '?λ' : A function that allows mutating properties.
 			//mutating 'a.b ? =' : Actuall mutating of existing properties.
-		//note: 'a.( ) ? = ' : is allowed and mutates existing properties.
+		//note: 'a.[ ] ? = ' : is allowed and mutates existing properties.
 		//Mutating: can not be used inside a pure function. Can only be used in global or scopes that allow mutating objects.
 			//e.g.
 
@@ -724,6 +758,9 @@
 	(1 2 3), //normal block
 	[1 2 3], //array block
 	{a=1,b=2,c=3} //object block
+
+//
+	¬
 //tests
 	#helloWorld = (
 		print (@r0)(λλ$1) "hello world",
@@ -739,7 +776,7 @@
 			repeat !!is0:%reg=0;
 			let i=0;
 			repeat {@;
-				send %reg str.(i);
+				send %reg str.[i];
 				#i+=1;
 			}
 		})
@@ -752,11 +789,32 @@
 		),
 	);
 	#classes=(
-		Y = a>a a,
-		new = Y,
-		vec2 = new Vector2>(//Vector2:Class
+		Z = f>(a>a a)(x>f(λ a x)),
+		monads = (
+			Monad = monadFoo>Z (//Monad:<value>λZ()
+				//monadFoo:λλvalue
+				self>//:Monad
+				x>//:value
+				foo>(//:λvalue
+					self λ$0,monadFoo foo x
+				)
+			)λ$0,
+			maybe = Monad f>x>
+				(x == null)
+					()
+					(f x) 
+					null = ()
+			,
+			(λmaybe 2,
+				x>x.a,
+				x>x.b + 2, //λ$0.b + 2,
+				x>x.c,
+				x>x.d<$1
+			)
+		),
+		class = f>Z f λ$0,
+		vec2 = class vec2>(//Vector2:Class
 			x>y>(//
-				vec2 = new Vector2,
 				get <= (
 					x <= x,// main λλ$1,
 					y <= y,// main λλ$0,

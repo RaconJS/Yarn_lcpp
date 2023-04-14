@@ -7,13 +7,13 @@ mod compile {
 	use std::collections::HashMap;
 	#[derive(Debug)]
 	pub struct GlobalCompileContext <'a>{
-		pub treeNum:wordTree::Recur_type,
+		pub nodeNum:wordTree::Recur_type,
 		pub source:HashMap<&'a str,Vec<&'a str>>,
 	}
 	impl GlobalCompileContext<'_>{
 		pub fn new()->GlobalCompileContext<'static>{
 			GlobalCompileContext{
-				treeNum:0,
+				nodeNum:0,
 				source:HashMap::new(),
 			}
 		}
@@ -48,43 +48,11 @@ mod compile {
 		}
 		//keep track of recursion
 		#[derive(Debug)]
-		pub struct Tree<'owner>{pub vec:Vec<Node<'owner>>,recur:Recur<'owner>,num:Recur_type}
-		pub type Recur<'a> = HashMap<Recur_type,Recur_type>;
+		#[derive(Clone)]
+		pub struct Tree<'owner>{pub vec:Vec<Node<'owner>>}
 		pub type Recur_type = i64;
-		impl Tree<'_>{
-			pub fn Recur_tryCalling<'a>(from:&mut Tree<'a>,to:&Tree<'a>)->bool{
-				match from.recur.get(&to.num) {
-					Some(recursLeft) => {
-						if *recursLeft>0 {from.recur.insert(to.num,*recursLeft-1);true}
-						else {false}
-					},
-					None => false,
-				}
-			}
-			pub fn Recur_trySet<'a>(from:&mut Tree<'a>,to:&Tree<'a>,newMaxRecur:Recur_type)->bool{
-				match from.recur.get(&to.num) {
-					Some(recursLeft) => {
-						if *recursLeft>0 {from.recur.insert(to.num,*recursLeft-1);true}
-						else {false}
-					},
-					None => {from.recur.insert(to.num,newMaxRecur);true},
-				}
-			}
-		}
-		/*impl <'owner> std::fmt::Debug for Tree<'owner> {
-			fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-				f.debug_struct("")
-					.field("vec",&self.0.iter().map(|v|match &v.node {
-						NodeType::word(word)=>*word,
-						NodeType::tree(_tree)=>"&tree",
-					}).collect::<Vec<&str>>())
-					//.field("n", &self.node.0)
-					//.field("l", &self.charPos.line)
-					//.field("c", &self.charPos.column)
-					.finish()
-			}
-		}*/
 		#[derive(Debug)]
+		#[derive(Clone)]
 		pub struct Node<'owner>{
 			pub node:NodeType<'owner>,
 			pub wordType:WordType,
@@ -97,18 +65,21 @@ mod compile {
 				pos:CharPos{
 					line:0,
 					column:0,
+					num:0,
 					fileName:"",
 				},
 			};
 			// add code here
 		}
 		#[derive(Debug)]
+		#[derive(Clone)]
 		pub enum NodeType<'owner>{
 			tree(Tree<'owner>),
 			word(&'owner str),
 		}
 		#[derive(Debug)]
-		#[derive(PartialEq)]
+		#[derive(PartialEq)] //no idea what this does
+		#[derive(Clone)]
 		pub enum WordType{
 			tree,// Tree
 			any,//any string
@@ -124,7 +95,8 @@ mod compile {
 		pub struct CharPos<'a>{
 			fileName:&'a str,
 			line:usize,
-			column:usize
+			column:usize,
+			num:Recur_type,
 		}
 		pub fn parseFileString<'a>(s:&'a str,fileName:&'a str,globalCompileContext:&mut GlobalCompileContext<'a>)->Tree<'a>{//string->tree<string>
 			let WORD_REGEX:Regex = Regex::new(
@@ -165,14 +137,17 @@ mod compile {
 				wordsLen:i64,
 				charPos:&mut CharPos<'a>,
 				bracket:i8,
-				treeNum:&mut Recur_type
-			)->Tree<'a>{
+				nodeNum_in:Recur_type,
+			)->(Tree<'a>,Recur_type){
+				let mut nodeNum = nodeNum_in;
 				let mut treeVec = Vec::new();//:Vec<Node>
 				let mut i:usize = *index;
 				let words = wordsRef;
 				let mut forI:i64 = *index as i64;
-				let mut addNode=|node:NodeType<'a>,wordType:WordType,charPos:&CharPos<'a>|{//word:&'a str,Type:fn(&str) -> NodeType<'_>){
+				let mut addNode=|nodeNum:Recur_type,node:NodeType<'a>,wordType:WordType,charPos:&mut CharPos<'a>|{//word:&'a str,Type:fn(&str) -> NodeType<'_>){
+					charPos.num=nodeNum;
 					treeVec.push(Node::<'a>{node,wordType,pos:charPos.clone()});
+					nodeNum+1
 				};
 				let getBracket=|word:&str|->i8{
 					*bracketsMap.get(&word.chars().nth(0).unwrap() as &char).unwrap()
@@ -184,34 +159,35 @@ mod compile {
 					charPos.column+=word.len();
 					if "([{".contains(word) {
 						i+=1;
-						addNode(NodeType::word(word),WordType::bracket_open,&charPos);
-						let newTree = toTree(
+						nodeNum = addNode(nodeNum,NodeType::word(word),WordType::bracket_open,charPos);
+						let newTree;
+						(newTree,nodeNum) = toTree(
 							&bracketsMap,
 							&i,
 							wordsRef,
 							wordsLen,
 							charPos,
 							getBracket(word),
-							treeNum,
+							nodeNum,
 							//recursion+1,
 						);
 						//allows   [(],[)],{(},{)},{[},{]}
 						//prevents ([),(]),({),(}),[{],[}]
 						//if words[i].chars().nth(0).unwrap() as char == word {break;}
-						addNode(NodeType::tree(newTree),WordType::tree,&charPos);
+						nodeNum = addNode(nodeNum,NodeType::tree(newTree),WordType::tree,charPos);
 					}
 					else if ")]}".contains(word) {
 						let endBracket = getBracket(word);
 						let openBracket = bracket;
 						if endBracket==openBracket {
-							addNode(NodeType::word(word),WordType::bracket_close,&charPos);
+							nodeNum = addNode(nodeNum,NodeType::word(word),WordType::bracket_close,charPos);
 						}
 						if endBracket>=openBracket {break}
 
 					}
 					else if Regex::new(r"\w+").unwrap().is_match(word) {
 						i+=1;
-						addNode(NodeType::word(word),WordType::word,&charPos);
+						nodeNum = addNode(nodeNum,NodeType::word(word),WordType::word,charPos);
 					}
 					//comment or blank space
 					else if Regex::new(r"^(/[/*]|\s)").unwrap().is_match(word) {
@@ -231,22 +207,23 @@ mod compile {
 					}
 					else {
 						i+=1;
-						addNode(NodeType::word(word),WordType::any,&charPos);
+						nodeNum = addNode(nodeNum,NodeType::word(word),WordType::any,charPos);
 					}
 				}
-				let tree = Tree{vec:treeVec,recur:HashMap::new(),num:*treeNum};
-				*treeNum+=1;
-				tree
+				let tree = Tree{vec:treeVec};
+				(tree,nodeNum)
 			}
-			toTree(
+			let ret = toTree(
 				&bracketsMap,
 				&(0 as usize),
 				&words,
 				wordsLen,
-				&mut CharPos{line:0,column:0,fileName},
+				&mut CharPos{line:0,column:0,num:0,fileName},
 				*bracketsMap.get(&'{').unwrap(),
-				&mut globalCompileContext.treeNum,
-			)
+				globalCompileContext.nodeNum,
+			);
+			globalCompileContext.nodeNum = ret.1;
+			ret.0
 			/*let a:Tree;
 			let mut b = Vec::new();
 			b.push(Node::string("asd"));
@@ -265,7 +242,7 @@ mod compile {
 			context:Context<'a>,
 			paramName:Option<&'a str>,
 			recurName:Option<&'a str>,
-			source:&'a Node<'a>,
+			source:Node<'a>,
 		}
 		#[derive(Debug)]
 		struct FunctionCall<'a>{
@@ -364,12 +341,12 @@ mod compile {
 			let maxLen = 3;
 			let mut func = Func::new();
 			let mut context = contextIn;
-			let mut lastNodes:Vec<(&str,&Node)>=vec![
-				("",&Node::NULL),
-				("",&Node::NULL),
-				("",&Node::NULL),
+			let mut lastNodes:Vec<(&str,Node)>=vec![
+				("",Node::NULL),
+				("",Node::NULL),
+				("",Node::NULL),
 			];
-			let mut iter = code.vec.iter();
+			let mut iter = code.vec.into_iter();
 			loop {
 				let node;
 				match iter.next(){
@@ -401,7 +378,7 @@ mod compile {
 									}
 									else{
 										param = "";
-										throw(globalCompileContext, node, 
+										throw(globalCompileContext, &node, 
 											"errorType",
 											 "expected parameter before '::'"
 										);
@@ -415,7 +392,7 @@ mod compile {
 									FuncNode::lambda(
 										Lambda{
 											context:context.clone(),
-											source:node,
+											source:node.clone(),
 											paramName:Some(param),
 											recurName:recur,
 										}
@@ -424,7 +401,7 @@ mod compile {
 
 							}//'?>'
 							else{
-								throw(globalCompileContext, node, 
+								throw(globalCompileContext, &node, 
 									"errorType",
 									 "expected parameter before '>'"
 								);
