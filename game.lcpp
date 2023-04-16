@@ -4,12 +4,14 @@ pong = {window}>(
 	center = [screenSize.x/2,screenSize.y/2],
 	paddlePos = 0.9 * center.0,
 	ballSize = 5,
+	paddleSize = 5,
 	state = newState 0,
 	newState = gameNumber>(
 		playerPos<=[
 			[paddlePos center.1]
 			[-paddlePos center.1]
 		],
+		num <= gameNumber,
 		score<=[0 0],
 		ball <= [center [1 1]],
 	),
@@ -17,9 +19,9 @@ pong = {window}>(
 		p = playerPos,
 		b = ball,
 		s = score,
-		bounceOffpaddles=>(
+		ball.1 = bounceOffpaddles=>(
 			x = b.0.0,
-			p.map [p]>p.0
+			p.reduce [[velocity p i]>(p.0 - x).abs.< paddleSize velocity [[1,-1].[i],velocity.y] , ball.1]
 		),
 		checkScore=>(
 			x = b.0.0,
@@ -30,7 +32,7 @@ pong = {window}>(
 						({score scoredPoint<=\\$1},score.1=++score.1)
 						{score scoredPoint<= 0}
 			),
-			state = newState,
+			state = newState (++state.num),
 			state = (state,state.score = score),
 			(scoredPoint \state<$2,a>a)a>a,
 		),

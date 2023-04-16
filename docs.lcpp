@@ -302,7 +302,7 @@
 			//self referencing is also not possible with this
 				//e.g.
 					(//assume this is global scope
-						a = a //ERROR: 'a' is not declared
+						a = a //ERROR: 'a' is not declared. This error will not happen if 'a' is defined else where.\
 					)
 		//If the same value is defined multiple times then it uses the most recent one
 			//e.g.
@@ -359,11 +359,12 @@
 
 //assignment types '<=>' '.' :
 	//Operator choices '<=' '<=>' '=>':
-		//These are notes to help remember which operator does what.
+		//These are a list of notes to help remember which operator does what.
 		//The '=>' arrows point towards the value that is added to the blocks return value.
+
 		//'a <= b' adds the property 'a' to the final value, because it points towards the label.
 		//'a => b' adds expression 'b' as an argument onto the final value, because it points towards the expression.
-		//'a <=> b' adds both the label 'a' and the expression 'b' because it points to both.
+		//'a <=> b' adds both the label 'a' and the expression 'b' because it points to both arguments.
 	//'=>' use and define
 		//e.g.
 			(a => 2)
@@ -398,10 +399,10 @@
 			//Using the '.[ ]' pattern, the property can be decided when it is evaluated.
 				//e.g.
 					getProperty = obj>name>obj.[name],
-					setProperty = obj>name>(obj,(name)),
+					setProperty = obj>name>value>(obj,obj.[name]<=value),
 			//Can also be used to make hidden properties that can only be referenced with the same lambda or object reference :
 				//e.g.
-					hideProperty = obj>key>value>obj.[key] = 
+					hideProperty = obj>value>(obj.[key] = )
 			//The code inside '.[ ]' is a normal scope and not an array scope
 				//e.g.
 					[1 2 3 4 5].[2 2]//returns '5' since '(2 2)' == '4'
@@ -411,7 +412,7 @@
 			obj.a,//2
 		//public labels are assigned to the output of a block
 			//e.g.
-			foo = (a>a a,a<=2),
+			foo = ((a>a a) a<=2),
 			foo.a,//2
 			foo 3,//27 (because 3^3=3*3*3=27)
 	//'<=>' use & define public label
@@ -546,7 +547,15 @@
 		3_sub_x = 3-,
 		hypot = a>b>a*a+b*b,
 		a * a + b * b
-//custom operators '¬=' : UNFINISHED
+//custom operators '¬=' :
+	//Makes a custom infix operator value.
+	//These labels are special since they are infix.
+	//Custom operator cannot presserve their operator status if passed into a function.
+	//e.g.
+		(
+			add ¬= [a b]> f>x> a f (b f x),
+			1 add 3,
+		)
 //arrays '[]':
 	//pattern '[ ]' :
 		//Works similar to a '()' block except the first expression isn't used as a function.
@@ -556,7 +565,7 @@
 			//e.g.
 				[] (a>a) 2 3
 				//returns
-				[a>a, 2 3]
+				[(a>a) 2 3]
 			//e.g.
 				[1 2] [3 4]
 				//returns
@@ -565,6 +574,10 @@
 				[1 2] [[3 4] 5]
 				//returns
 				[1 2 [3 4] 5]
+	//indexing:
+		//can use 'array.number' or 'array.[label]'. This is the same system used for retreaving properties from objects.
+		[11 22 33].1 //22
+		[11 22 33].[1 + 1] //33
 	//Arrays are it's own datatype.
 	//Arrays have the array properties as pecified later on
 	//note:
@@ -649,18 +662,32 @@
 		{a b} =(a<=1,b=2),//b == ()
 	//e.g.
 		[a b] = [1 3].map [v]>f>x>f(v f x),
-//using & with:
+//using & with '( )>' '( )=':
 	//using '( )>' :
-		//This pattern does not change how
-		//These are a type of lambda function, with unnamed parameters.
-		//"using" functions are special functions that can not use any parameters or labels defined outside them.
+		//UPDATE using blocks are no longer functions
+		//This pattern does not change how the code functions, only allows for performance gains and can throw errors from undefined labels.
+		//These contain a scope on the right side of the '( )>' expression
+		//"using" blocks can not use any parameters or labels defined outside them.
 		//The only outside labels that can be used are the ones given to them inside the '( )' part of the '()>'
 		//pattern '(a b c)>' : 
-			//These functions have an unnamed parameter similar to 'λ'.
 			//They are useful for making functions even more contained or limiting what mutable values are allowed inside a function
 			//e.g.
 				(a> b> (a b)> a, b)
+				(a> b> (a)> a, b)//ERROR: 'b' is not defined. The 'b' outside cannot be reached
 				(a?> b?> (b)>b)
+				()>(
+					add5 => (add)> a> add a 5,
+					add = a>b>f>x>(a f,b f x),
+					((state1)>
+						set1 = value?>state1.a?=value,
+						get1 = ?λstate1.a,
+						get1_atAState = ?λ
+							λstate1.a,//This pure function does not need to copy 'state2' since it can't be accessed inside the use block
+						get_first_value = value>state1.a,
+					)
+					state1?=(a<=1),
+					state2?=(a<=1),
+				)
 	//with '( )=':
 		//note this pattern can not come after a '.' since what would conflict with the 'a.[b]' syntax.
 		//Gets all the properties of the objects in the '( )' and uses them as local values in the inner scope.
@@ -758,9 +785,6 @@
 	(1 2 3), //normal block
 	[1 2 3], //array block
 	{a=1,b=2,c=3} //object block
-
-//
-	¬
 //tests
 	#helloWorld = (
 		print (@r0)(λλ$1) "hello world",
@@ -790,27 +814,28 @@
 	);
 	#classes=(
 		Z = f>(a>a a)(x>f(λ a x)),
-		monads = (
+		monads = ((Z)>
 			Monad = monadFoo>Z (//Monad:<value>λZ()
 				//monadFoo:λλvalue
 				self>//:Monad
 				x>//:value
 				foo>(//:λvalue
+					foo == (), x,
 					self λ$0,monadFoo foo x
 				)
 			)λ$0,
 			maybe = Monad f>x>
 				(x == null)
 					()
-					(f x) 
+					(f x)
 					null = ()
 			,
 			(λmaybe 2,
 				x>x.a,
 				x>x.b + 2, //λ$0.b + 2,
 				x>x.c,
-				x>x.d<$1
-			)
+				x>x.d<$1,
+			)(λ $ 0)
 		),
 		class = f>Z f λ$0,
 		vec2 = class vec2>(//Vector2:Class
