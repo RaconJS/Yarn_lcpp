@@ -28,7 +28,6 @@
 		type
 	//param
 		//word or symbol with an optional type
-		
 	//params:
 		//a list of param separated by spaces and/or ','s
 		param
@@ -43,15 +42,20 @@
 	//property
 		//expression followed be a list of labels
 		expression . label
+		property . label
 	//type
 		()
 		[]
 		(@)
 		""
 		(#)
+		(types)
 		label
 		{params}
-		[type+]
+		[types] //tuple
+	//types
+		type
+		types , type
 	//assignment
 	//expression:
 		label
@@ -813,7 +817,7 @@
 		),
 	);
 	#classes=(
-		Z = f>(a>a a)(x>f(λ a x)),
+		Z = f>(a>a a)(x>f(λ x x)),
 		monads = ((Z)>
 			Monad = monadFoo>Z (//Monad:<value>λZ()
 				//monadFoo:λλvalue

@@ -57,7 +57,10 @@ Monad = monadFoo>Z (//Monad:<value>λZ()
 	self>//:Monad
 	x>//:value
 	foo>(//:λvalue
+		foo == ()
+		x
 		self λ$0,monadFoo foo x
 	)
 )λ$0,
 maybe = Monad f>x>x == () () (f x),
+Y = f>(a>a a)(x>f(x x)),
