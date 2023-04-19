@@ -129,7 +129,7 @@
 		//expressions can separated using brackets '()', which also help with scoping (but that's for another section)
 		//everything after a lambda '>' is part of said lambda
 		//e.g.
-		f>x> f (f a>a x) (a>b>x (x a)) x
+			f>x> f (f a>a x) (a>b>x (x a)) x
 	//A lambda function can be made using the 'a >' paturn or the 'λ' paturn
 	//pattern 'a >' :
 		//'>' is just like arrow functions '=>' in javascript.
@@ -840,6 +840,31 @@
 				x>x.c,
 				x>x.d<$1,
 			)(λ $ 0)
+		),
+		Y_combinator = (
+			Y = f>(a>a a)(x>f(x x)),
+			(
+				Lazy = f>x>f x,
+				(
+					(
+						(
+							(
+								(
+									(
+										x>(is0 x 1,f,--x)
+										f = (Lazy\x x)
+									)
+								)
+								x = x>f(x x)
+							)
+							(Lazy\--x)
+						)
+						x = 3
+					)
+					f = Lazy \x x x = x>f(x x)
+				)
+				f = f>x>(is0 x 1,f,--x)
+			)
 		),
 		class = f>Z f λ$0,
 		vec2 = class vec2>(//Vector2:Class

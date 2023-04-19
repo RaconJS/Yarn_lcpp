@@ -64,3 +64,25 @@ Monad = monadFoo>Z (//Monad:<value>λZ()
 )λ$0,
 maybe = Monad f>x>x == () () (f x),
 Y = f>(a>a a)(x>f(x x)),
+
+(
+	(
+		(
+			(
+				(
+					(
+						(
+							x>(is0 x 1,f,--x)
+							f = (Lazy\x x)
+						)
+					)
+					x = x>f(x x)
+				)
+				(Lazy\--x)
+			)
+			x = 3
+		)
+		f = Lazy \x x x = x>f(x x)
+	)
+	f = f>x>(is0 x 1,f,--x)
+)
