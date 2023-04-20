@@ -36,6 +36,7 @@
 				v instanceof RecurSetter?Object.assign(new Lazy(v.exp),{context,recur:+this.toInt(v.recur)??0}):
 				v instanceof NameSpace?v:
 				v instanceof Array?Object.assign(new Lazy(...v),{context}):
+				typeof v.call == "function"?v:
 				v instanceof Object?(v=>{
 					let labels={};
 					for(let i in v){
@@ -43,7 +44,6 @@
 					}
 					return new NameSpace(labels);
 				})(v):
-				typeof v.call == "function"?v:
 				v//uncallable object
 			).reduce((s,v)=>
 				s.call(v,context,stack)
