@@ -467,6 +467,7 @@ function compile (text){
 				if(isTree(v))yield*forEachTree(v,isTree);
 			}
 		}
+		patterns.forEach = forEachPattern;
 		const forEachPattern = ()=>forEachTree(context,v=>v?.list);
 		function addRefParam(match,match_parents,param){
 			//match:Pattern
