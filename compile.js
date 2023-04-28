@@ -23,14 +23,16 @@
 			super(exps.length);
 			Object.assign(this,exps);
 		}
-		call(arg=undefined,context=undefined,stack=[]){//(arg:Lazy,Stack)->Lazy
+		call(arg=undefined,context=undefined,stack=new Stack()){//(arg:Lazy,Stack)->Lazy
 			//let v = this;
 			//if(v!=this)v.call(arg,this.context,stack);
 			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
 			return this.eval(stack).call(arg);
 		}//(a>a)(a>a a)
-		eval(stack=[]){
+		eval(stack=new Stack()){
 			const context = this.context;
+			if(this.length==0)return Lambda.null;
+			//note this.map first calls 'new Lazy(this.length)' which is overwriten if there is at least 1 item in the expression.
 			let ans = this.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack)->Lazy}}[]
 				typeof v == "number"?context.getValue(v):
 				typeof v == "string"?v://simple raw string cannot be called
@@ -52,9 +54,12 @@
 				v//uncallable object
 			).reduce((s,v)=>
 				s.call(v,context,stack)
-			)
-			if(ans instanceof Lazy)
-			while(ans.length == 1 && ans[0] instanceof Lazy)ans=ans[0];//assume: is Tree
+			);
+			if(ans instanceof Lazy){
+				while(ans.length == 1 && ans[0] instanceof Lazy ||(!("call" in (ans[0]??{})) && ans[0] instanceof Array))ans=ans[0];//assume: is Tree
+				//ans:Lazy|Array
+				if(ans.length == 0)ans = Lambda.null;
+			}
 			return ans;
 		}
 		toInt(foo){//foo:{call(inc)->{call(0)->Number}}
@@ -62,7 +67,7 @@
 		}
 		static toInt(foo){//foo:{call(inc)->{call(0)->Number}}
 			if(foo instanceof Int)return foo;
-			const inc = x=>x instanceof Int?new Int(x+1):new Lazy(Int.increment)
+			const inc = Int.increment;
 			const zero = new Int(0);
 			return foo.call(inc).call(zero);
 		}
@@ -85,38 +90,95 @@
 		}
 	}
 	Context.null = new Context();
-	function stackCheck(stack){
-		if(1)return true;
-		let counts=[];
-		let numMap = stack.reduce((s,v,i)=>s.has(v)?s.set(v,i):s,new Map())//Map(Exp,Number)
-		let recurs = [];
-		numStack = stack.map(v=>
-			(int=>{
-				counts[int]??=0;
-				counts[int]++;
-				if(counts[int]>1)recurs.push()
-				return int
-			})(numMap.get(v))
-		);
-		for(let i of numStack){
+	class Stack extends Array{
+		constructor(...exps){
+			super(exps.length);
+			Object.assign(this,exps);
 		}
-		let recursions=[];
+		add(lambda){
+			let id = lambda.id;
+			if(id!=undefined){
+				this.unshift(id);
+			}
+			let isValid = this.stackCheck();
+			if(!isValid)this.shift();
+			return isValid;
+		}
+		remove(){
+			this.shift();
+		}
+		stackCheck(){//only checks last item
+			let id = this.shift();
+			let lastId=this.indexOf(id);
+			this.unshift(id);
+			if(lastId==-1)return true;
+			for(let i=lastId+1;i<this.length;){
+				let isMatch=true;
+				if(this[i]!=id){i++;continue}
+				else i++;
+				if(i+lastId>this.length){return true}
+				if(lastId==0){return false}
+				else for(let i1=0;i1<lastId;[i1++,i++]){
+					if(this[i]!=this[i1+1]){isMatch=false;break;}
+				}
+				if(isMatch)return false;
+			}
+			return true;
+		}
 	}
+	let p = 4;
+	loga(0?new Stack(1,0,0,1).stackCheck():
+		//2,4,10
+		//1,3,6,12,18,30,36,36,36,18,0
+		//1,4,12,36,96,264,672,1680,4080,9480,21312,46296
+		//new Array(11).fill().map((v,i)=>
+			new Array(p**4)
+			.fill()
+			.map(
+				(v,i,a)=>
+					(a.length+i).toString(p)
+					.substr(1)
+					.split("")
+					.map(v=>+v)
+			)
+			.reduce(
+				(s,v)=>
+				s?s:[v,
+				//0?new Stack(...v).stackCheck():
+				v.reduce(
+					(s,v,i,a)=>
+						!s?s:new Stack(
+							...[...a].splice(a.length-1-i,i+1)
+						).stackCheck()
+					,true
+				)][1]
+				,false
+			)
+			//.reduce((s,v)=>s+v[1],0)
+		//).join(",")
+	)
 	//code:
 		class Lambda extends Array{//:Exp
 			constructor(...exps){
 				super(exps.length);
 				Object.assign(this,exps);
 			}
-			static null = new Lambda(0);
+			id;//:number
+			static null = new class Null{
+				call(arg){return arg}
+				eval(){return this}
+			};
 			findHighestContext(){
 				return this.highestContext?this.highestContext:
 					findHighestContext(this);
 			}
-			call(arg,context=new Context(),stack){
+			call(arg,context=new Context(),stack=new Stack()){
+				stack.add(this);
 				context = new Context(context,arg);
 				let recur = arg instanceof Lazy?arg.recur:1;
-				return Object.assign(new Lazy(...this),{context,recur}).eval();
+				let ans = Object.assign(new Lazy(...this),{context,recur}).eval();
+				stack.remove(this);
+				return ans;
 			}
 			eval(){return this}
 			toJS(){
@@ -184,7 +246,7 @@
 		};
 		static increment = {
 			//n> f>x>f(n f x)
-			call(arg){return(arg|0)+1??arg.call(this.lazyExpVersion)},
+			call(arg){return new Int((arg|0)+1)??arg.call(this.lazyExpVersion)},
 			lazyExpVersion:new Lambda(new Lambda(new Lambda(1,[2,1,0]))),
 		};
 		call(arg_f){//f>x>
@@ -198,7 +260,6 @@
 			this.args = args;
 			if(args.length>=func.length){
 				const ans = this.func(...args.map(v=>Lazy.toInt(v)));
-				loga(Lazy.toInt(args[0]))
 				return isNaN(ans)?Lambda.null:new Int(ans);
 			}
 			//func:(...Number[])->Number
@@ -463,7 +524,7 @@ function compile (text){
 				let context = bracketContext;
 				let word;
 				let isFirst=true;
-				tree = tree.filter((v,i)=>!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/));
+				tree = tree.filter((v,i)=>typeof v[0]!="string"||!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/));
 				for(let i=0;i<tree.length;isFirst=false){
 					word = getWord(tree,i);
 					let match = match_pattern(tree,i);
@@ -559,8 +620,6 @@ function compile (text){
 				parent?.currentLabels?.get?.(name)
 				??(p=>parents.includes(p?.owner)?undefined:p)(parent?.startLabels?.get?.(name))
 			;
-
-			//loga(match.parent.parent.startLabels.get("a"))
 			parents?.push?.(parent);
 			return param?
 				{param,parents}:
@@ -572,7 +631,7 @@ function compile (text){
 		class Operator extends Param{
 			constructor(name,priority,foo){
 				super({name:[name,-1],priority,owner:context,value:foo});
-				this.value.isOperator = this;//:truthy
+				this.value.operatorParamObj = this;//:truthy
 			}
 			isParsed=false;
 			//name:[String,Number]
@@ -588,11 +647,22 @@ function compile (text){
 			let i=0;
 			const bool_true = new Lambda(new Lambda(1));
 			const bool_false = new Int(0);
+			const equality = (a,b)=>{//(Exp,Exp)-> Lambda bool
+				a==b?bool_true
+				:+a==+b?bool_true//assume: NaN!=NaN
+				:a instanceof Array?
+					!(b instanceof Array)?bool_false
+					:!(a.constructor == b.constructor)?bool_false
+					:a.length != b.length?bool_false
+					:a.reduce((s,v,i)=>s==bool_false?s:equality(a[i],b[i]),bool_true)
+				:bool_false
+			}
 			context.startLabels= new Map([
 				//TODO: allow '!!a' -> '(! (! a))'
 				new Operator("!" ,  i,new Func((a)=>Lazy.toInt(a)==0||a==Lambda.null?bool_true:bool_false)),
 				new Operator("~" ,  i,new Calc((a)=>~a)),
 				new Operator("++",  i,new Calc((a)=>a+1)),
+				new Operator("--",  i,new Calc((a)=>a+1)),
 				new Operator("&" ,++i,new Calc((a,b)=>a&b)),
 				new Operator("|" ,  i,new Calc((a,b)=>a|b)),
 				new Operator("^" ,  i,new Calc((a,b)=>a^b)),
@@ -601,7 +671,11 @@ function compile (text){
 				new Operator("/" ,  i,new Calc((a,b)=>a/b)),
 				new Operator("+" ,++i,new Calc((a,b)=>a+b)),
 				new Operator("-" ,  i,new Calc((a,b)=>a-b)),
-				new Operator("==",++i,new Func((a,b)=>a==b)),
+				new Operator("==",++i,new Func((a,b)=>equality(a,b))),
+				new Operator("<" ,  i,new Func((a,b)=>a==b?bool_true:bool_false)),
+				new Operator(">" ,  i,new Func((a,b)=>a==b?bool_true:bool_false)),
+				new Operator(">=",  i,new Func((a,b)=>a==b?bool_true:bool_false)),
+				new Operator("<=",  i,new Func((a,b)=>a==b?bool_true:bool_false)),
 				new Operator("&&",++i,new Lambda(new Lambda(1,0,1))),
 				new Operator("||",  i,new Lambda(new Lambda(1,1,0))),
 				new Operator("^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0))),
@@ -622,7 +696,7 @@ function compile (text){
 					}
 					let startLabels=bracketParent.startLabels;
 					let i=0;
-					match.value = new Lazy;
+					match.value = new Lazy;//single value, represents the right side of the assignment.
 					for(let param of match.params){//param:Param
 						if(!startLabels.has(param))startLabels.set(param.name[0],param);
 						param.value = match.value;
@@ -631,7 +705,10 @@ function compile (text){
 				else if(match.type == "function"){//assume pre-fix
 					if(match.pattern==">")match.startLabels = new Map(match.params.map(v=>[v.name[0],v]));
 					match.funcLevel++;
-					match.value = new Lambda;
+					match.value = new Lambda
+				}
+				else if(match.pattern == "()="){//with/use
+					match.value = bracketParent.value;
 				}
 				else if(match instanceof BracketPattern){
 					if(match.pattern=="()"){
@@ -643,6 +720,9 @@ function compile (text){
 					if(match.pattern=="{}"){
 						match.value = [];
 					}
+				}
+				if(match.value){
+					match.value.id = match.id;
 				}
 			}
 			//find and link references
@@ -714,20 +794,20 @@ function compile (text){
 				let list = value;
 				for(let priority=0;priority<maxPriority+1;priority++){
 					for(let i=0;i<list.length;i++){
+						//'a+b' -> '((+)a b)'
+						//'~a' -> '((~)a) '
 						let operator = list[i];
-						if(!(operator.isOperator instanceof Operator))continue;
-						if(operator.isOperator.isParsed)continue;
-						if(!(operator.isOperator.priority == priority))continue;
+						if(!(operator.operatorParamObj instanceof Operator))continue;
+						if(!(operator.operatorParamObj.priority == priority))continue;
 						let foo = operator.func;
 						let useLeftArg = foo.length == 2;
-						if(i<list.length-1)
-						if(i>0 && !operator.isOperator.isFirst){//helps prevent parsing the same operator twice, since it wants to end up in the form '[+ a b]'
+						if(i<list.length-1)//has right argument
+						if( (i>0&& !operator.operatorParamObj.isFirst) || !useLeftArg){
 							let newOperation = [operator];
 							let splice=list.splice(i-useLeftArg,foo.length+1);
 							newOperation.push(...(foo.length==2?[splice[0],splice[2]]:[splice[1]]));
 							list.splice(i-useLeftArg,0,newOperation);
 							i-=useLeftArg;
-							operator.isOperator.isParsed=true;
 							//'a + b' -> '(+ a b)'
 							//'! a' -> '(! a)'
 						}
@@ -738,7 +818,7 @@ function compile (text){
 		}(patterns.list));
 		return context;
 	}
-	let regex =/[λ]|\b\w+\b|"[^"]*"|[^\s]|\s+|\/\/.*|\/\*[\s\S]*\*\//g;
+	let regex =/[λ]|\b\w+\b|"[^"]*"|(?:[!%^&*-+~<>])=|[+\-*&|^=><]{2}|[^\s]|\s+|\/\/.*|\/\*[\s\S]*\*\//g;
 	let lines = text.split("\n");
 	const words = text.match(regex)??[];
 	const getLineFromWord=new Map();
@@ -761,13 +841,15 @@ function compile (text){
 		const expression = context.value;
 		return expression;//parse(tree);
 	}
-	if(TEST)return main();
+	if(TEST){
+		return main()??new Lazy(Lambda.null);
+	}
 	else try{//main
 		return main();
 	}catch(error){
 		console.log(error);
-		return new Lazy;
+		return new Lazy(Lambda.null);
 	}
 }
-loga(compile(`i=n>n(++)0,+ (3) 3`).eval())//f>(r>r x>f(r x),a>a a)`));
+//loga(compile(`a>b>a,2`).eval())//f>(r>r x>f(r x),a>a a)`));
 //loga(Y.call(new Calc((f,n)=>n==0?1:n*f.call(n-1))).call(new Int(4)));
