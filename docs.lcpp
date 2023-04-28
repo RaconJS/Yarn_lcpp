@@ -292,10 +292,15 @@
 			(a> a a (a, a a) a, a a)
 	//pattern 'a =' :
 		//Similar to haskell, constants can be assigned using the 'a =' pattern, where 'a' is a label for a constant.
-		//Also similar to haskell labels can be used before they are defined 
+		//Also similar to haskell labels can be used before they are defined
+			//implementation:
+				//'a =' patterns are processed before lambda evaluation.
+				//When referencing a label, the value is looked for:
+					//First in the previous definision of a label. (excluding parent assignment patterns)
+					//Next in the first definision of a label within the same scope.
+					//Finally in the parent scope using the above 2 rules.
 			//e.g.
 				(a a,a=a>a)
-		
 		//errors:
 			//loops of label definitions are not allowed:
 				//e.g.
@@ -327,6 +332,12 @@
 		//e.g.
 			(four (a>b>b a a) four = 2 2)
 			(true = a> b> a)
+			(//note that this
+				++ = a> f>x>f(a f x),
+				a = 1,
+				a = ++a,//2
+				a = ++a,//3
+			)
 	//'()' :
 		//This pattern is also known as a context or a block scope.
 		//Contexts can contain a single main lambda function and labels inside it.
@@ -522,26 +533,29 @@
 		>= !=
 		! 
 		&& || ^^
-		<- -> <->
+		<- -> (<->)
+		(>) (<) (=) (==)
+	//note that the raw, normal functions can be obtained by putting symbols in brackets on their own.
+		//this can be done to use symbols such as '>' as an operator instead of a lambda declaration
 	//Operators are special type of variable since they can be used for infix operations
 	//Different operators have different priorities for when they are evaluated.
 	//These operators are evaluated before any function calls
 	//Being labels they can be used as parameters.
 	//Operators have default values which are the operations one would expect in other languages
 		//e.g.
-		//polyfill for 'add'
-		//note this code wouldn't work as self references for '(+)', can't be done directly.
-		+ = [floatA floatB]>(
-			a = floatA,
-			b = floatB,
-			a == () (b == () (+)(b > (+) [a b])) 
-			(b == () (a > (+) [a b]) 
-				(//a and b exist
-					//test for operator overloading
-					a.[+] ==
-				)
-			) 
-		),
+			//polyfill for 'add'
+			//note this code wouldn't work as self references for '(+)', can't be done directly.
+			+ = [floatA floatB]>(
+				a = floatA,
+				b = floatB,
+				a == () (b == () (+)(b > (+) [a b])) 
+				(b == () (a > (+) [a b]) 
+					(//a and b exist
+						//test for operator overloading
+						a.[+] ==
+					)
+				) 
+			),
 	//pattern 'a + b'
 	//e.g.
 		a + b,
@@ -866,7 +880,7 @@
 				f = f>x>(is0 x 1,f,--x)
 			)
 		),
-		class = f>Z f λ$0,
+		class = f>Z f λ $0,
 		vec2 = class vec2>(//Vector2:Class
 			x>y>(//
 				get <= (
