@@ -15,7 +15,6 @@ const TEST = false;
 	class Lazy extends Array{//:Exp ; lazy evaluation
 		//Lazy : Exp[]
 		context;//:Context
-		recur=1;//:Number|Int
 		findHighestContext(){
 			return this.highestContext?this.highestContext:
 				findHighestContext(this);
@@ -130,7 +129,7 @@ const TEST = false;
 				+" Possibly, unmatching amounts of add() and remove()."
 				+" data.recurs should not be modified elsewhere"
 			);
-			if(--data.recurs == 0){
+			if(!this.includes(lambda.id)){
 				data.maxRecur = Infinity;
 			}
 			this.shift();
@@ -181,9 +180,9 @@ const TEST = false;
 				}
 				if(!stack.add(this,arg)){
 					//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
-					return Lambda.null;
+					//return Lambda.null;
 					//recursion detected
-					if(0){
+					if(1){
 						let file = files.getDataFromID[this.id].file;
 						file.throwError(this.id,"recursion","unbounded recursion detected",a=>Error(a),stack)
 					}
@@ -277,15 +276,13 @@ const TEST = false;
 	}
 	class Calc{//calculation
 		constructor(func,args=[]){
-			this.func=func;
-			this.args = args;
+			this.func=func;//:(...Number[])->Number
+			this.args = args;//:Lazy[]
 			if(args.length>=func.length){
 				const ans = this.func(...args.map(v=>Lazy.toInt(v)));
 				return isNaN(ans)?Lambda.null:new Int(ans);
 			}
-			//func:(...Number[])->Number
 		}
-		args;//:Lazy[]
 		//isOperater:bool&Operator?
 		call(arg){//Int->Int-> ... Int-> Int
 			return new this.constructor(this.func,[...this.args,arg])
@@ -337,10 +334,6 @@ const TEST = false;
 		}
 		eval(stack){return this.value.eval(stack);}
 	};
-	//ints
-	//f>x>f (x x)
-
-	//f>(a>a a)x>f a a=x x
 	//const Y = new Lambda(new Lambda(0,0),new Lambda(new Lambda(2,0),[0,0]));
 	let Y = new Lambda(new Lambda(1,[0,0]),new Lambda(1,[0,0]));
 	let vec2 = new Lambda(new Lambda({x:1,y:0}));//x>y>{x y}
@@ -402,13 +395,14 @@ function compile (text,fileName){
 			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
 			line = line.substr(whiteSpace.length)//[whiteSpace,line]
 			let lineLen = (""+data.line).length;
+			loga(data)
 			return ""
 				+data.line+" |" +line+"\n"
 				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteSpace.length)+"^".repeat(data.word.length)+" "+msg
 			;
 		}
-		call(...args){return this.value.call(...args)}
-		eval(...args){return this.value.eval(...args)}
+		call(...args){return this.value.call(...args)??Lambda.null}
+		eval(...args){return this.value?.eval(...args)??Lambda.null}
 	}
 	function treeParse(words){
 		let list = [];
@@ -437,6 +431,7 @@ function compile (text,fileName){
 		//classes & consts
 			const numberRegex = /^(?:[0-9]+(\.[0-9]*)?|0x[0-9a-fA-F]+(\.[0-9a-fA-F]*)?|0b[01]+(\.[01]*)?)$/;
 			const getWord = (tree,i)=>tree[i]?.[0]??"";
+			const getID = (tree,i)=>tree[i]?.[1];
 			class Pattern{
 				constructor(data){
 					Object.assign(this,data)
@@ -533,10 +528,11 @@ function compile (text,fileName){
 			let oldI=i;
 			if(!pattern){
 				let word = getWord(tree,i);
-				if(word=="<"){
+				if(word=="<"){ //'< a' or '< a $ n'
 					++i;
 					if(getWord(tree,i).match(/\w+/)){
 						pattern = "<";
+						type = "return";
 						params = [tree[i]];
 						++i;
 					}
@@ -550,7 +546,7 @@ function compile (text,fileName){
 				hasOwnContext=true;
 				options="";
 				if(getWord(tree,i)=="?"){options+="?";++i}
-				if("\\λ".includes(getWord(tree,i))){pattern="λ";type="function";list=[];++i}
+				if("\\λ".includes(getWord(tree,i))){pattern="λ";id=getID(tree,i);type="function";list=[];++i}
 			}
 			if(!pattern){//function and assignment | 'with' block | 'use' block
 				i=oldI;
@@ -580,10 +576,10 @@ function compile (text,fileName){
 					else params = [tree[i++]];
 				}
 				if(getWord(tree,i)=="?"){options+="?";++i}
-				if(getWord(tree,i)==">"){options+=pattern=">";++i;type="function";}
+				if(getWord(tree,i)==">"){options+=pattern=">";id=getID(tree,i);++i;type="function";}
 				else {
 					if(getWord(tree,i)=="<"){options+="<";++i}
-					if(getWord(tree,i)=="="){options+=pattern="=";++i;type="assignment";}
+					if(getWord(tree,i)=="="){options+=pattern="=";id=getID(tree,i);++i;type="assignment";}
 					if(getWord(tree,i)==">"){options+=">";++i}
 				}
 				if(options.includes("(")&&pattern){//()> or ()=
@@ -679,10 +675,7 @@ function compile (text,fileName){
 			}
 		}
 		let context = new BracketPattern;
-		let patterns = {
-			list:[...(getPatterns(tree,context))],
-			context
-		};
+		getPatterns(tree,context);//mutates context
 		function* forEachTree(context,getTree){//isTree:node->Tree?
 			const tree = getTree(context);
 			for(let i=0;i<tree.length;i++){
@@ -692,7 +685,6 @@ function compile (text,fileName){
 			}
 		}
 		const forEachPattern = ()=>forEachTree(context,v=>v?.list??[]);
-		patterns.forEach = forEachPattern;
 		function addRefParam(match,match_parents,param){
 			//match:Pattern
 			//match_parents:Set(BracketPattern)
@@ -804,7 +796,8 @@ function compile (text,fileName){
 			let base = word[1]=="b"?2:word[1]=="x"?16:10;
 			return !isNaN(+word)?+word:(([a,b])=>+a+b/base**b.length)(word.split("."));
 		}
-		(function getAssignments(patterns){
+		//mutates context
+		(function getAssignments(){
 			//find definisions
 			for(let [match,i,bracketParent] of forEachPattern()){
 				match.funcLevel = match.parent?.funcLevel || 0;
@@ -957,7 +950,7 @@ function compile (text,fileName){
 				}
 			}
 
-		}(patterns.list));
+		}());
 		return context;
 	}
 	let regex =/[λ]|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"[^"]*"|::|(?:[!%^&*-+~<>])=|([+\-*&|^=><])\1?|[^\s]|\s+|\/\/.*|\/\*[\s\S]*\*\//g;
@@ -973,7 +966,7 @@ function compile (text,fileName){
 		s = {...s};
 		if(v.match("\n")){
 			s.line += (v.match(/\n/g)?.length??0);
-			s.column = (v.match(/.*$/g)?.length??0);//assume: column >= 1
+			s.column = (v.match(/.*$/g)?.length??0)+1;//assume: column >= 1
 		}
 		else s.column+=v.length;
 		return s;
@@ -999,7 +992,9 @@ function tryCatch (foo,exceptionValue){
 	}
 }
 tryCatch(()=>{
-	loga(compile("2 2::2"))
+	loga(compile(`
+		Y = f>r (x>f(r x)) r=a>a a,
+		factorial = !>x>x==1,
+		factorial
+	`).eval());
 });
-//loga(Y.call(new Calc((f,n)=>n==0?1:n*f.call(n-1))).call(new Int(4)));
-//λ
