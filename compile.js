@@ -1,5 +1,5 @@
 //TEST
-const TEST = false;
+const TEST = true;
 //UNTESTED
 //TODO
 //classes
@@ -9,7 +9,7 @@ const TEST = false;
 		return list.reduce((s,v)=>Math.max(s,typeof v=="number"?v:s.findHighestContext()),-1);
 	}
 	class Exp{
-		call(arg,context,stack){return arg}
+		call(arg,context,stack,maxRecur){return arg}
 		eval(){return this}
 	}
 	class Lazy extends Array{//:Exp ; lazy evaluation
@@ -24,17 +24,21 @@ const TEST = false;
 			super(exps.length);
 			Object.assign(this,exps);
 		}
-		call(arg=undefined,context=undefined,stack=new Stack()){//(arg:Lazy,Stack)->Lazy
-			//let v = this;
-			//if(v!=this)v.call(arg,this.context,stack);
-			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
-			return this.eval(stack).call(arg,this.context,stack);
+		//note: all arguments are optional in curtain cases.
+		call(arg,context,stack,maxRecur){//(arg:Lazy,Stack)->Lazy
+			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack,maxRecur);
+			return this.eval(stack).call(arg,this.context,stack,maxRecur);
 		}//(a>a)(a>a a)
-		eval(stack=new Stack()){
+		eval(stack){
+			let ans = this;
+			{
+				while(ans.length == 1 && ans[0] instanceof Lazy ||(!("call" in (ans[0]??{})) && ans[0] instanceof Array))ans=ans[0];//assume: ans is Tree
+				//ans:Lazy|Array
+				if(ans.length == 0)return Lambda.null;
+			}
 			const context = this.context;
-			if(this.length==0)return Lambda.null;
 			//note this.map first calls 'new Lazy(this.length)' which is overwriten if there is at least 1 item in the expression.
-			let ans = this.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack)->Lazy}}[]
+			ans = ans.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack,Number)->Lazy}}[]
 				typeof v == "number"?context.getValue(v):
 				typeof v == "string"?v://simple raw string cannot be called
 				//typeof v == "string"?:
@@ -44,12 +48,13 @@ const TEST = false;
 				v instanceof Int?v:
 				v instanceof NameSpace?v:
 				v instanceof List?v:
+				v instanceof RecurSetter?v.context?v:new RecurSetter(v.value,v.recur,context):
 				v instanceof Array?Object.assign(new Lazy(...v),{context}):
 				typeof v.call == "function"?v:
 				v instanceof Object?(v=>{
 					let labels={};
 					for(let i in v){
-						labels[i]=new Lazy(v[i])
+						labels[i]=Object.assign(new Lazy(v[i]),{});
 					}
 					return new NameSpace(labels);
 				})(v):
@@ -83,12 +88,15 @@ const TEST = false;
 			});
 			this.chainLen=(parent?.level??-1)+1;//:Number
 		}
-		getValue(num){
+		getContext(num){
 			let context = this;
 			for(let i=0;i<num;i++){
 				context = context.parent;
 			}
-			return context.argument;
+			return context;
+		}
+		getValue(num){
+			return this.getContext(num).argument;
 		}
 	}
 	Context.null = new Context();
@@ -97,39 +105,57 @@ const TEST = false;
 			super(exps.length);
 			Object.assign(this,exps);
 		}
-		add(lambda,maxRecur=1){
+		add(lambda,recurSetter=undefined){
 			let id = lambda.id;
 			if(id!=undefined){
 				this.unshift(id);
 			}
-			let isValid = this.stackCheck(maxRecur);
-			if(!isValid)this.shift();
+			//recurSetter:RecurSetter
+			let recursLeft = recurSetter instanceof RecurSetter?+recurSetter.getRecursLeft()??0:1;
+			let data = files.getDataFromID[id];
+			data.maxRecur = Math.min(data.maxRecur,data.recurs+recursLeft);
+			if(isNaN(data.maxRecur)||data.maxRecur==Infinity)data.maxRecur = data.recurs;
+			let [isValid,recurs] = this.stackCheck(data.maxRecur);
+			data.recurs = recurs;
+			if(!isValid){
+				this.shift();
+				data.recurs--;
+			}
 			return isValid;
 		}
-		remove(){
+		remove(lambda){
+			let data = files.getDataFromID[lambda.id];
+			if(data.recurs==0)throw Error("compiler error:"
+				+" Possibly, unmatching amounts of add() and remove()."
+				+" data.recurs should not be modified elsewhere"
+			);
+			if(--data.recurs == 0){
+				data.maxRecur = Infinity;
+			}
 			this.shift();
 		}
-		stackCheck(maxRecur=1){//only checks last item
+		stackCheck(maxRecur){//only checks last item
+			//:Number->[bool,Number]
 			let recurs=1;
 			let id = this.shift();
 			let lastId=this.indexOf(id);
 			this.unshift(id);
-			if(lastId==-1)return true;
+			if(lastId==-1)return [true,recurs];
 			for(let i=lastId+1;i<this.length;){
 				let isMatch=true;
 				if(this[i]!=id){i++;continue}
 				else i++;
-				if(i+lastId>this.length){return true}
-				if(lastId==0){return false}
+				if(i+lastId>this.length){return [true,recurs]}
+				if(lastId==0){return [false,recurs]}
 				else for(let i1=0;i1<lastId;[i1++,i++]){
 					if(this[i]!=this[i1+1]){isMatch=false;break;}
 				}
 				if(isMatch){
 					recurs++;
-					if(recurs>=maxRecur)return false;
+					if(recurs>=maxRecur)return [false,recurs];
 				}
 			}
-			return true;
+			return [true,recurs];
 		}
 	}
 	//code:
@@ -147,14 +173,18 @@ const TEST = false;
 				return this.highestContext?this.highestContext:
 					findHighestContext(this);
 			}
-			call(arg,context=new Context(),stack=new Stack()){
-				if(!stack.add(this)){
+			call(arg=undefined,context=new Context(),stack=new Stack()){
+				let recurObj;
+				if(arg instanceof RecurSetter){
+					arg=arg.value;
+				}
+				if(!stack.add(this,arg)){
 					//recursion detected
 					throwError(this.id,"recursion","unbounded recursion detected",a=>Error(a),stack)
 				}else {}
 				context = new Context(context,arg);
 				let recur = arg instanceof Lazy?arg.recur:1;
-				let ans = Object.assign(new Lazy(...this),{context,recur}).eval(stack);
+				let ans = Object.assign(new Lazy(...this),{context,recur,id:this.id}).eval(stack);
 				stack.remove(this);
 				return ans;
 			}
@@ -168,22 +198,22 @@ const TEST = false;
 				Object.assign(this,{labelName,value,parent});
 			}
 		}
-		class RecurSetter extends Exp{//:Exp
-			constructor(exp,recur){//:(Exp,Exp)->Exp
+		class RecurSetter extends Exp{//'value::recur'
+			constructor(value,recur,context=undefined){
 				Object.assign(this,{
-					exp,//:Context?
-					recur,
+					value,//:Exp
+					recur,//:Exp
+					context,//:Context?
 				});
 			}
-			findRecur(){
-				return this.recur||0;
+			getRecursLeft(){//()-> finite Number
+				return Lazy.toInt(this.recur);
 			}
 			call(arg,context,stack){
-				context.maxRecur = ;//Adds data to context to be used by the next lambda object.
-				this.exp.call(arg,context,stack);
+				return this.value.call(...args);
 			}
-			eval(){
-
+			eval(stack){
+				return this.value.eval(stack)
 			}
 		}
 		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
@@ -193,8 +223,8 @@ const TEST = false;
 			}
 			labels;//labels:Map([String],Lazy)
 			lazy;//:lazy ()
-			call(arg,context,stack){
-				if(this.lazy)return this.lazy.call(arg,context,stack);//{a>a a} x -> (a>a a) x
+			call(arg,context,stack,maxRecur){
+				if(this.lazy)return this.lazy.call(arg,context,stack,maxRecur);//{a>a a} x -> (a>a a) x
 				if(arg instanceof NameSpace)return new NameSpace({...this.labels,...arg.labels},arg.lazy);
 				else return arg.call(this);
 			}
@@ -204,7 +234,7 @@ const TEST = false;
 			constructor(name){
 				this.name=name;//:String
 			}
-			call(arg,context,stack){
+			call(arg,context,stack,maxRecur){
 				if(arg instanceof NameSpace)return arg.labels
 			}
 			eval(){return this}
@@ -219,10 +249,10 @@ const TEST = false;
 				this.value = value;//:Number|Int
 				this.foo = arg_f;//:Lazy
 			}
-			call(arg_x,context,stack){
+			call(arg_x,context,stack,maxRecur){
 				let ans = arg_x;
 				for(let i = 0;i<this.value;i++){
-					ans = this.foo.call(ans,context,stack);
+					ans = this.foo.call(ans,context,stack,maxRecur);
 				}
 				return ans;
 			}
@@ -230,7 +260,7 @@ const TEST = false;
 		};
 		static increment = {
 			//n> f>x>f(n f x)
-			call(arg){return new Int((arg|0)+1)??arg.call(this.lazyExpVersion)},
+			call(arg,context,stack,maxRecur){return new Int((arg|0)+1)??this.lazyExpVersion.call(arg)},
 			lazyExpVersion:new Lambda(new Lambda(new Lambda(1,[2,1,0]))),
 		};
 		call(arg_f){//f>x>
@@ -270,7 +300,7 @@ const TEST = false;
 			super(list.length);
 			Object.assign(this,list);
 		}
-		call(arg,context,stack){
+		call(arg,context,stack,maxRecur){
 			;
 		}
 		eval(){return this}
@@ -280,6 +310,25 @@ const TEST = false;
 			:array[Lazy.toInt(index)]??Lambda.null
 		)
 	}
+	class Reference extends Exp{//wrapper for Lazy
+		constructor(value,levelDif,id){
+			this.value=value;//:Exp
+			this.levelDif=levelDif;//:Number
+			this.id = id;//:Number
+		}
+		call(arg,context,stack,maxRecur){
+			//context??= new Context();
+			if(!context)throw Error(
+				"compiler error."
+				+"This might imply specialised combinators need,"
+				+"to pass in the context argument."
+			);
+			let value = Object.assign(new Lazy,this.value);
+			value.context=context.getContext(this.levelDif);
+			return value.call(arg,context,stack,maxRecur);
+		}
+		eval(stack){return this.value.eval(stack);}
+	};
 	//ints
 	//f>x>f (x x)
 
@@ -780,6 +829,11 @@ function compile (text,fileName){
 									match.value = refLevel;
 								}
 							}
+							else if(param.owner.type == "assignment"){
+								const paramValue = param.value;
+								const levelDif = match.funcLevel-param.owner.funcLevel;
+								match.value = new Reference(paramValue,levelDif,match.id);
+							}
 							else{
 								match.value = param.value;
 							}
@@ -847,7 +901,7 @@ function compile (text,fileName){
 		}
 		else s.column+=v.length;
 		return s;
-	},{line:1,column:1,file,word:""});
+	},{line:1,column:1,file,word:"",recurs:0,maxRecur:Infinity});
 	let main=()=>{
 		const tree = treeParse(words);
 		//note: extra methods are added so that context can be used as an Expression.
@@ -873,5 +927,7 @@ function tryCatch (foo,exceptionValue){
 	}
 }
 tryCatch(()=>{
+	loga(compile("1+1*3").eval())
 });
 //loga(Y.call(new Calc((f,n)=>n==0?1:n*f.call(n-1))).call(new Int(4)));
+//λ
