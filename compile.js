@@ -1,4 +1,5 @@
 //TEST
+const TEST = false;
 //UNTESTED
 //TODO
 //classes
@@ -27,7 +28,7 @@
 			//let v = this;
 			//if(v!=this)v.call(arg,this.context,stack);
 			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
-			return this.eval(stack).call(arg);
+			return this.eval(stack).call(arg,this.context,stack);
 		}//(a>a)(a>a a)
 		eval(stack=new Stack()){
 			const context = this.context;
@@ -37,11 +38,12 @@
 				typeof v == "number"?context.getValue(v):
 				typeof v == "string"?v://simple raw string cannot be called
 				//typeof v == "string"?:
-				v instanceof Int?v:
 				v instanceof Lambda?Object.assign(new Lazy(v),{context}):
 				v instanceof Lazy?v:
 				v instanceof RecurSetter?Object.assign(new Lazy(v.exp),{context,recur:+this.toInt(v.recur)??0}):
+				v instanceof Int?v:
 				v instanceof NameSpace?v:
+				v instanceof List?v:
 				v instanceof Array?Object.assign(new Lazy(...v),{context}):
 				typeof v.call == "function"?v:
 				v instanceof Object?(v=>{
@@ -95,19 +97,20 @@
 			super(exps.length);
 			Object.assign(this,exps);
 		}
-		add(lambda){
+		add(lambda,maxRecur=1){
 			let id = lambda.id;
 			if(id!=undefined){
 				this.unshift(id);
 			}
-			let isValid = this.stackCheck();
+			let isValid = this.stackCheck(maxRecur);
 			if(!isValid)this.shift();
 			return isValid;
 		}
 		remove(){
 			this.shift();
 		}
-		stackCheck(){//only checks last item
+		stackCheck(maxRecur=1){//only checks last item
+			let recurs=1;
 			let id = this.shift();
 			let lastId=this.indexOf(id);
 			this.unshift(id);
@@ -121,42 +124,14 @@
 				else for(let i1=0;i1<lastId;[i1++,i++]){
 					if(this[i]!=this[i1+1]){isMatch=false;break;}
 				}
-				if(isMatch)return false;
+				if(isMatch){
+					recurs++;
+					if(recurs>=maxRecur)return false;
+				}
 			}
 			return true;
 		}
 	}
-	let p = 4;
-	loga(0?new Stack(1,0,0,1).stackCheck():
-		//2,4,10
-		//1,3,6,12,18,30,36,36,36,18,0
-		//1,4,12,36,96,264,672,1680,4080,9480,21312,46296
-		//new Array(11).fill().map((v,i)=>
-			new Array(p**4)
-			.fill()
-			.map(
-				(v,i,a)=>
-					(a.length+i).toString(p)
-					.substr(1)
-					.split("")
-					.map(v=>+v)
-			)
-			.reduce(
-				(s,v)=>
-				s?s:[v,
-				//0?new Stack(...v).stackCheck():
-				v.reduce(
-					(s,v,i,a)=>
-						!s?s:new Stack(
-							...[...a].splice(a.length-1-i,i+1)
-						).stackCheck()
-					,true
-				)][1]
-				,false
-			)
-			//.reduce((s,v)=>s+v[1],0)
-		//).join(",")
-	)
 	//code:
 		class Lambda extends Array{//:Exp
 			constructor(...exps){
@@ -173,10 +148,13 @@
 					findHighestContext(this);
 			}
 			call(arg,context=new Context(),stack=new Stack()){
-				stack.add(this);
+				if(!stack.add(this)){
+					//recursion detected
+					throwError(this.id,"recursion","unbounded recursion detected",a=>Error(a),stack)
+				}else {}
 				context = new Context(context,arg);
 				let recur = arg instanceof Lazy?arg.recur:1;
-				let ans = Object.assign(new Lazy(...this),{context,recur}).eval();
+				let ans = Object.assign(new Lazy(...this),{context,recur}).eval(stack);
 				stack.remove(this);
 				return ans;
 			}
@@ -191,15 +169,21 @@
 			}
 		}
 		class RecurSetter extends Exp{//:Exp
-			constructor(exp,recur){
+			constructor(exp,recur){//:(Exp,Exp)->Exp
 				Object.assign(this,{
 					exp,//:Context?
 					recur,
 				});
 			}
-			findHighestContext(){
-				return this.highestContext?this.highestContext:
-					Math.max(findHighestContext(this.exp),findHighestContext(this.recur));
+			findRecur(){
+				return this.recur||0;
+			}
+			call(arg,context,stack){
+				context.maxRecur = ;//Adds data to context to be used by the next lambda object.
+				this.exp.call(arg,context,stack);
+			}
+			eval(){
+
 			}
 		}
 		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
@@ -282,8 +266,9 @@
 		eval(){return this}
 	}
 	class List extends Array{
-		constructor(list){
-			this.list = list;
+		constructor(...list){
+			super(list.length);
+			Object.assign(this,list);
 		}
 		call(arg,context,stack){
 			;
@@ -292,7 +277,7 @@
 		list = [];
 		static get = new Func((array,index)=>
 			!(array instanceof List)?Lambda.null
-			:array.list[Lazy.toInt(index)]??Lambda.null
+			:array[Lazy.toInt(index)]??Lambda.null
 		)
 	}
 	//ints
@@ -305,33 +290,58 @@
 	let recur = new Lambda();
 //----
 function loga(...logs){console.log(...logs)}
-function compile (text){
+const files={
+	getDataFromID:[],//Map(id => Data{line,column,fileName,word})
+	list:new Map(),//Map(String => FileData)
+}
+function compile (text,fileName){
 	//types
 		//syntax, reference
-	let TEST = false;
-	function throwError(wordNum,type,errorMessage,error){//error = str=>Error(str)
-		//note: lines and colums are counted from 1
-		let data = getLineFromWord.get(wordNum);
-		let line = lines[data.line-1];
-		let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
-		line = line.substr(whiteSpace.length)//[whiteSpace,line]
-		if(!TEST)error=a=>a;
-		let lineLen = (""+data.line).length;
-		throw error(
-			"lc++ ERROR:\n"
-			//"l:"+data.line+" c:"+data.column+"\n"
-			// " ".repeat(lineLen)+" |\n"
-			+data.line          +" |" +line+"\n"
-			+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteSpace.length)+"^".repeat(words[wordNum].length)+" "+type+" error\n"
-			+"error"+": "+errorMessage+"\n"
-		);
+	if(fileName!=undefined&&files.list.has(fileName)){
+		return files.list.get(fileName).expression;
+	}
+	class FileData{//data for errors
+		constructor(data){Object.assign(this,data);}
+		words;
+		tree;
+		lines;
+		context;
+		lambda;
+		expression;
+		throwError(wordNum,type,errorMessage,error,stack){//error = str=>Error(str)
+			//note: lines and colums are counted from 1
+			if(!TEST)error=a=>a;
+			throw error(
+				"lc++ ERROR:\n"
+				//"l:"+data.line+" c:"+data.column+"\n"
+				// " ".repeat(lineLen)+" |\n"
+				+this.displayWordInLine(wordNum,type+" error")+"\n"
+				+"error"+": "+errorMessage+"\n"
+				+(!stack?"":
+					"stack:\n"
+					+stack.map(v=>this.displayWordInLine(v,"")).join("\n")
+				)
+			);
+		}
+		displayWordInLine(wordNum,msg){
+			const words = this.words;
+			let data = files.getDataFromID.get(wordNum);
+			let line = data.lines[data.line-1];
+			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
+			line = line.substr(whiteSpace.length)//[whiteSpace,line]
+			let lineLen = (""+data.line).length;
+			return ""
+				+data.line+" |" +line+"\n"
+				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteSpace.length)+"^".repeat(words[wordNum].length)+" "+msg
+			;
+		}
 	}
 	function treeParse(words){
 		let list = [];
 		let stack = [];
 		for(let i=0;i<words.length;i++){
 			let word = words[i];
-			let value = [word,i];
+			let value = [word,fileID+i,file];
 			if(word.match(/[(\[{]/)){
 				stack.push(list);
 				list.push(value,list = []);
@@ -389,6 +399,7 @@ function compile (text){
 				parent;
 				pattern='()';//'()'|'[]'|'{}'
 				list=[];//:Tree<Pattern> ; brackets only
+				id;//:index in getDataFromID
 			}
 			class Pattern_extra{
 				startLabels;//:Map(String,Ref)
@@ -541,8 +552,9 @@ function compile (text){
 						continue;
 					}
 					else if("([{".includes(word)){
+						let id = tree[i][1];
 						++i;
-						let bracket=new BracketPattern({pattern:{"(":"()","[":"[]","{":"{}"}[word],list:[],parent:context,isFirst});
+						let bracket=new BracketPattern({pattern:{"(":"()","[":"[]","{":"{}"}[word],list:[],parent:context,isFirst,id});
 						yield bracket;
 						context.list.push(bracket);
 						yield*getPatterns(tree[i],bracket);
@@ -820,13 +832,14 @@ function compile (text){
 	}
 	let regex =/[λ]|\b\w+\b|"[^"]*"|(?:[!%^&*-+~<>])=|[+\-*&|^=><]{2}|[^\s]|\s+|\/\/.*|\/\*[\s\S]*\*\//g;
 	let lines = text.split("\n");
+	const fileID = files.getDataFromID.length;
 	const words = text.match(regex)??[];
-	const getLineFromWord=new Map();
-	const getWordFromLine=new Map();
+	const file = new FileData({words,lines,id:fileID});
+	files.list.set(fileName,file);
 	words.reduce((s,v,i)=>{
 		s.word = v;
-		getLineFromWord.set(i,s);
-		getWordFromLine.set(s,i);
+		let id = files.getDataFromID.length;
+		files.getDataFromID.push(s);
 		s = {...s};
 		if(v.match("\n")){
 			s.line += (v.match(/\n/g)?.length??0);
@@ -834,22 +847,31 @@ function compile (text){
 		}
 		else s.column+=v.length;
 		return s;
-	},{line:1,column:1,word:""});
+	},{line:1,column:1,file,word:""});
 	let main=()=>{
 		const tree = treeParse(words);
-		const context = parseContexts(tree);
+		//note: extra methods are added so that context can be used as an Expression.
+		const context = Object.assign(parseContexts(tree),{
+			call(...args){return this.value.call(...args)},
+			eval(...args){return this.value.eval(...args)},
+		});
 		const expression = context.value;
-		return expression;//parse(tree);
+		Object.assign(file,{tree,context,expression})
+		return context;//parse(tree);
 	}
+	return tryCatch(main,new Lazy(Lambda.null));
+}
+function tryCatch (foo,exceptionValue){
 	if(TEST){
-		return main()??new Lazy(Lambda.null);
+		return foo();
 	}
 	else try{//main
-		return main();
+		return foo();
 	}catch(error){
 		console.log(error);
-		return new Lazy(Lambda.null);
+		return exceptionValue;
 	}
 }
-//loga(compile(`a>b>a,2`).eval())//f>(r>r x>f(r x),a>a a)`));
+tryCatch(()=>{
+});
 //loga(Y.call(new Calc((f,n)=>n==0?1:n*f.call(n-1))).call(new Int(4)));
