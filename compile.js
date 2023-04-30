@@ -1,5 +1,5 @@
 //TEST
-const TEST = true;
+const TEST = false;
 //UNTESTED
 //TODO
 //classes
@@ -9,7 +9,7 @@ const TEST = true;
 		return list.reduce((s,v)=>Math.max(s,typeof v=="number"?v:s.findHighestContext()),-1);
 	}
 	class Exp{
-		call(arg,context,stack,maxRecur){return arg}
+		call(arg,context,stack){return arg}
 		eval(){return this}
 	}
 	class Lazy extends Array{//:Exp ; lazy evaluation
@@ -25,14 +25,15 @@ const TEST = true;
 			Object.assign(this,exps);
 		}
 		//note: all arguments are optional in curtain cases.
-		call(arg,context,stack,maxRecur){//(arg:Lazy,Stack)->Lazy
-			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack,maxRecur);
-			return this.eval(stack).call(arg,this.context,stack,maxRecur);
+		call(arg,context,stack){//(arg:Lazy,Stack)->Lazy
+			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
+			return this.eval(stack).call(arg,this.context,stack);
 		}//(a>a)(a>a a)
 		eval(stack){
 			let ans = this;
 			{
-				while(ans.length == 1 && ans[0] instanceof Lazy ||(!("call" in (ans[0]??{})) && ans[0] instanceof Array))ans=ans[0];//assume: ans is Tree
+				//[x],Lazy(x) -> x; where x:Lazy|Array
+				while(ans.length != 1?false: ans[0] instanceof Lazy || ans[0].constructor==Array)ans=ans[0];//assume: ans is Tree
 				//ans:Lazy|Array
 				if(ans.length == 0)return Lambda.null;
 			}
@@ -179,8 +180,13 @@ const TEST = true;
 					arg=arg.value;
 				}
 				if(!stack.add(this,arg)){
+					//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
+					return Lambda.null;
 					//recursion detected
-					throwError(this.id,"recursion","unbounded recursion detected",a=>Error(a),stack)
+					if(0){
+						let file = files.getDataFromID[this.id].file;
+						file.throwError(this.id,"recursion","unbounded recursion detected",a=>Error(a),stack)
+					}
 				}else {}
 				context = new Context(context,arg);
 				let recur = arg instanceof Lazy?arg.recur:1;
@@ -198,8 +204,9 @@ const TEST = true;
 				Object.assign(this,{labelName,value,parent});
 			}
 		}
-		class RecurSetter extends Exp{//'value::recur'
+		class RecurSetter extends Array{//'value::recur'
 			constructor(value,recur,context=undefined){
+				super(0);
 				Object.assign(this,{
 					value,//:Exp
 					recur,//:Exp
@@ -223,8 +230,8 @@ const TEST = true;
 			}
 			labels;//labels:Map([String],Lazy)
 			lazy;//:lazy ()
-			call(arg,context,stack,maxRecur){
-				if(this.lazy)return this.lazy.call(arg,context,stack,maxRecur);//{a>a a} x -> (a>a a) x
+			call(arg,context,stack){
+				if(this.lazy)return this.lazy.call(arg,context,stack);//{a>a a} x -> (a>a a) x
 				if(arg instanceof NameSpace)return new NameSpace({...this.labels,...arg.labels},arg.lazy);
 				else return arg.call(this);
 			}
@@ -234,7 +241,7 @@ const TEST = true;
 			constructor(name){
 				this.name=name;//:String
 			}
-			call(arg,context,stack,maxRecur){
+			call(arg,context,stack){
 				if(arg instanceof NameSpace)return arg.labels
 			}
 			eval(){return this}
@@ -249,10 +256,10 @@ const TEST = true;
 				this.value = value;//:Number|Int
 				this.foo = arg_f;//:Lazy
 			}
-			call(arg_x,context,stack,maxRecur){
+			call(arg_x,context,stack){
 				let ans = arg_x;
 				for(let i = 0;i<this.value;i++){
-					ans = this.foo.call(ans,context,stack,maxRecur);
+					ans = this.foo.call(ans,context,stack);
 				}
 				return ans;
 			}
@@ -260,7 +267,7 @@ const TEST = true;
 		};
 		static increment = {
 			//n> f>x>f(n f x)
-			call(arg,context,stack,maxRecur){return new Int((arg|0)+1)??this.lazyExpVersion.call(arg)},
+			call(arg,context,stack){return new Int((arg|0)+1)??this.lazyExpVersion.call(arg)},
 			lazyExpVersion:new Lambda(new Lambda(new Lambda(1,[2,1,0]))),
 		};
 		call(arg_f){//f>x>
@@ -290,8 +297,8 @@ const TEST = true;
 			this.func=func
 		}
 		//isOperater:bool&Operator?
-		call(arg){//Int->Int-> ... Int-> Int
-			return this.func(arg);
+		call(arg,context,stack){//Int->Int-> ... Int-> Int
+			return this.func(arg,context,stack);
 		}
 		eval(){return this}
 	}
@@ -300,7 +307,7 @@ const TEST = true;
 			super(list.length);
 			Object.assign(this,list);
 		}
-		call(arg,context,stack,maxRecur){
+		call(arg,context,stack){
 			;
 		}
 		eval(){return this}
@@ -312,11 +319,12 @@ const TEST = true;
 	}
 	class Reference extends Exp{//wrapper for Lazy
 		constructor(value,levelDif,id){
+			super();
 			this.value=value;//:Exp
 			this.levelDif=levelDif;//:Number
 			this.id = id;//:Number
 		}
-		call(arg,context,stack,maxRecur){
+		call(arg,context=new Context,stack){
 			//context??= new Context();
 			if(!context)throw Error(
 				"compiler error."
@@ -325,7 +333,7 @@ const TEST = true;
 			);
 			let value = Object.assign(new Lazy,this.value);
 			value.context=context.getContext(this.levelDif);
-			return value.call(arg,context,stack,maxRecur);
+			return value.call(arg,context,stack);
 		}
 		eval(stack){return this.value.eval(stack);}
 	};
@@ -341,30 +349,46 @@ const TEST = true;
 function loga(...logs){console.log(...logs)}
 const files={
 	getDataFromID:[],//Map(id => Data{line,column,fileName,word})
-	list:new Map(),//Map(String => FileData)
+	list:new Map(),//Map(fileName => FileData)
 }
 function compile (text,fileName){
+	if(typeof text != "string")throw throwError_noLine("basic API","'compile' requires a string input as the source code.",a=>Error(a));
 	//types
 		//syntax, reference
+	fileName??=(()=>{
+		for(let [fileName,value] of files.list.entries())
+			if(value.text == text)return fileName;
+		return undefined;
+	})(); 
 	if(fileName!=undefined&&files.list.has(fileName)){
-		return files.list.get(fileName).expression;
+		return files.list.get(fileName).context;
+	}
+
+	function throwError_noLine(type,errorMessage,error){
+		return error(
+			"lc++ ERROR:\n"
+			+type+" error"+"\n"
+			+errorMessage
+		);
 	}
 	class FileData{//data for errors
 		constructor(data){Object.assign(this,data);}
-		words;
-		tree;
-		lines;
-		context;
-		lambda;
-		expression;
-		throwError(wordNum,type,errorMessage,error,stack){//error = str=>Error(str)
+		text;//:string
+		id;//:number
+		words;//:string[]
+		tree;//:tree([string,id,FileData])
+		lines;//:string[]
+		context;//:BracketPattern
+		expression;//:Lazy
+		get value(){return this.expression}//:Exp
+		throwError(id,type,errorMessage,error,stack){//error = str=>Error(str)
 			//note: lines and colums are counted from 1
 			if(!TEST)error=a=>a;
 			throw error(
 				"lc++ ERROR:\n"
 				//"l:"+data.line+" c:"+data.column+"\n"
 				// " ".repeat(lineLen)+" |\n"
-				+this.displayWordInLine(wordNum,type+" error")+"\n"
+				+this.displayWordInLine(id,type+" error")+"\n"
 				+"error"+": "+errorMessage+"\n"
 				+(!stack?"":
 					"stack:\n"
@@ -372,18 +396,19 @@ function compile (text,fileName){
 				)
 			);
 		}
-		displayWordInLine(wordNum,msg){
-			const words = this.words;
-			let data = files.getDataFromID.get(wordNum);
-			let line = data.lines[data.line-1];
+		displayWordInLine(id,msg){
+			let data = files.getDataFromID[id];
+			let line = this.lines[data.line-1];
 			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
 			line = line.substr(whiteSpace.length)//[whiteSpace,line]
 			let lineLen = (""+data.line).length;
 			return ""
 				+data.line+" |" +line+"\n"
-				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteSpace.length)+"^".repeat(words[wordNum].length)+" "+msg
+				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteSpace.length)+"^".repeat(data.word.length)+" "+msg
 			;
 		}
+		call(...args){return this.value.call(...args)}
+		eval(...args){return this.value.eval(...args)}
 	}
 	function treeParse(words){
 		let list = [];
@@ -397,20 +422,20 @@ function compile (text,fileName){
 			}
 			else if(word.match(/[)\]}]/)){
 				list = stack.pop();
-				if(!list)throwError(i,"syntax", "unballanced brackets: Too many closing brackets", a=>Error(a));
+				if(!list)file.throwError(i,"syntax", "unballanced brackets: Too many closing brackets", a=>Error(a));
 				//assert: list[list.length-2] exists
 				let openBracket = list[list.length-2][0];
-				if(({"(":")", "[":"]", "{":"}"})[openBracket]!=word)throwError(i,"syntax", "unmatching brackets:'"+openBracket+"..."+word+"'", a=>Error(a));
+				if(({"(":")", "[":"]", "{":"}"})[openBracket]!=word)file.throwError(i,"syntax", "unmatching brackets:'"+openBracket+"..."+word+"'", a=>Error(a));
 				list.push(value);
 			}
 			else list.push(value);
 		}
-		if(stack.length>0)throwError(i,"syntax", "unballanced brackets: Too many opening brackets", a=>Error(a));
+		if(stack.length>0)file.throwError(i,"syntax", "unballanced brackets: Too many opening brackets", a=>Error(a));
 		return list;
 	}
 	function parseContexts(tree){
 		//classes & consts
-			const numberRegex = /^[0-9]+$/;
+			const numberRegex = /^(?:[0-9]+(\.[0-9]*)?|0x[0-9a-fA-F]+(\.[0-9a-fA-F]*)?|0b[01]+(\.[01]*)?)$/;
 			const getWord = (tree,i)=>tree[i]?.[0]??"";
 			class Pattern{
 				constructor(data){
@@ -481,11 +506,17 @@ function compile (text,fileName){
 					else {i=oldI;pattern = ""}
 					return new Pattern(getObj())
 				}
+				else if(word.match(numberRegex)){
+					pattern = word;
+					i++;
+					let match = new Simple({...getObj(),arg:word});
+					match.type="number";
+					return match;
+				}
 				else if(word.match(/^\w+$/)){
 					pattern = word;
 					i++;
 					let match = new Simple({...getObj(),arg:word});
-					if(word.match(numberRegex))match.type="number";
 					return match;
 				}
 			}
@@ -510,7 +541,6 @@ function compile (text,fileName){
 						++i;
 					}
 					if(getWord(tree,i)){
-
 						++i;
 					}
 				}
@@ -561,6 +591,16 @@ function compile (text,fileName){
 					type = "with";//{">"}[options.match(/(?<=\)).*$/)];
 				}
 			}
+			if(!pattern){//set recur
+				hasOwnContext=false;
+				i=oldI;
+				if(getWord(tree,i)=="::"){
+					pattern = "::";
+					type = "recursion";
+					hasOwnContext = true;
+					++i;
+				}
+			}
 			if(!pattern){
 				hasOwnContext=false;
 				i=oldI;
@@ -578,54 +618,69 @@ function compile (text,fileName){
 			let indentNum = (word.match(/\n\s*/g)??[]).reduce((s,v)=>Math.min(s,v.length),Infinity);
 			return word.split("\n").reduce((s,v)=>s+v.substr(indentNum));
 		};
-		let context = new BracketPattern;
-		let patterns = {
-			list:[...(function* getPatterns(tree,bracketContext){
-				let context = bracketContext;
-				let word;
-				let isFirst=true;
-				tree = tree.filter((v,i)=>typeof v[0]!="string"||!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/));
-				for(let i=0;i<tree.length;isFirst=false){
-					word = getWord(tree,i);
-					let match = match_pattern(tree,i);
-					if(match.pattern||(match instanceof Simple)){
-						({i}=match);
-						match.parent = context;
-						context.list.push(match);
-						match.isFirst=isFirst;
-						if(match.list){
-							context=match;
-							isFirst=true;
-						}
-						yield match;
-						continue;
+		function* getPatterns(tree,bracketContext){
+			let context = bracketContext;
+			let word;
+			let isFirst=true;
+			tree = tree.filter((v,i)=>typeof v[0]!="string"||!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/));
+			for(let i=0;i<tree.length;){
+				word = getWord(tree,i);
+				let match = match_pattern(tree,i);
+				while(context.pattern=="::"&&!isFirst){//takes in a single, short expression
+					context=context.parent;
+				}
+				if(match.pattern||(match instanceof Simple)){
+					({i}=match);
+					if(match.pattern == "::"){//get arg match for 'a :: r'
+						//prevent '(:: ... )' or ', :: ...'
+						if(isFirst)file.throwError(match.id,"syntax","Expected argument before recursion operator `::`.\nRecursion takes the form: `argument :: recursion`.\n",a=>Error(a));
+						//prevent '(a:: ...)' or ', a:: ...'
+						let match_arg = context.list.pop();
+						match_arg.parent = match;
+						if(match_arg.isFirst)file.throwError(match.id,"syntax","Expected prefious argument or inisial funciton before recursion pattern `::`.",a=>Error(a));
+						match.list.push(match_arg);
 					}
-					else if("([{".includes(word)){
-						let id = tree[i][1];
-						++i;
-						let bracket=new BracketPattern({pattern:{"(":"()","[":"[]","{":"{}"}[word],list:[],parent:context,isFirst,id});
-						yield bracket;
-						context.list.push(bracket);
-						yield*getPatterns(tree[i],bracket);
-						++i;
-					}
-					else if(")]}".includes(word)){
-						return;
-					}
-					else if(word == ","){
-						//yield comma;
-						//context.push(comma);
-						context = bracketContext;
+					match.parent = context;
+					context.list.push(match);
+					match.isFirst=isFirst;
+					if(match.list){
+						context=match;
 						isFirst=true;
 					}
-					else {
-						let match = new Simple({id:tree[i][1],arg:word,type:"symbol",parent:context,isFirst})
-						yield match;
-						context.list.push(match);
-					};
-					i++
+					else isFirst=false;
+					yield match;
+					continue;
 				}
-			}(tree,context))],
+				else if("([{".includes(word)){
+					let id = tree[i][1];
+					++i;
+					let bracket=new BracketPattern({pattern:{"(":"()","[":"[]","{":"{}"}[word],list:[],parent:context,isFirst,id});
+					yield bracket;
+					context.list.push(bracket);
+					yield*getPatterns(tree[i],bracket);
+					++i;
+				}
+				else if(")]}".includes(word)){
+					return;
+				}
+				else if(word == ","){
+					//yield comma;
+					//context.push(comma);
+					context = bracketContext;
+					isFirst=true;
+				}
+				else {
+					let match = new Simple({id:tree[i][1],arg:word,type:"symbol",parent:context,isFirst})
+					yield match;
+					context.list.push(match);
+				};
+				i++
+				isFirst=false
+			}
+		}
+		let context = new BracketPattern;
+		let patterns = {
+			list:[...(getPatterns(tree,context))],
 			context
 		};
 		function* forEachTree(context,getTree){//isTree:node->Tree?
@@ -660,7 +715,7 @@ function compile (text,fileName){
 			if(!higherArgParent)throw Error("compiler error");
 			if(higherParamParent.parent!=higherArgParent.parent)throw Error("compiler error");
 			{//check for and prevent reference loops
-				if(higherParamParent.refs?.has?.(higherArgParent))throwError(match.id,"illegal reference","recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
+				if(higherParamParent.refs?.has?.(higherArgParent))file.throwError(match.id,"illegal reference","recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
 			}
 			//note:
 				//From now on only things from block 'arg' can reference block 'param'
@@ -673,7 +728,7 @@ function compile (text,fileName){
 				higherArgParent.refLevel??=(higherParamParent.refLevel??-1)+1;
 				higherParamParent.refLevel??=higherArgParent.refLevel-1;
 			}
-			if(higherArgParent.refLevel<=higherParamParent.refLevel)throwError(match.id,"illegal reference","complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
+			if(higherArgParent.refLevel<=higherParamParent.refLevel)file.throwError(match.id,"illegal reference","complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
 			higherArgParent.refs.add(higherParamParent);
 		}
 		function getParam(name,parent,parents=[]){//parents:Pattern[]?
@@ -727,11 +782,13 @@ function compile (text,fileName){
 				new Operator("&" ,++i,new Calc((a,b)=>a&b)),
 				new Operator("|" ,  i,new Calc((a,b)=>a|b)),
 				new Operator("^" ,  i,new Calc((a,b)=>a^b)),
-				new Operator("**",++i,new Calc((a,b)=>a**b)),
+				new Operator("%" ,  i,new Calc((a,b)=>a%b)),
+				new Operator("**",  i,new Calc((a,b)=>a**b)),
 				new Operator("*" ,++i,new Calc((a,b)=>a*b)),
 				new Operator("/" ,  i,new Calc((a,b)=>a/b)),
 				new Operator("+" ,++i,new Calc((a,b)=>a+b)),
 				new Operator("-" ,  i,new Calc((a,b)=>a-b)),
+
 				new Operator("==",++i,new Func((a,b)=>equality(a,b))),
 				new Operator("<" ,  i,new Func((a,b)=>a==b?bool_true:bool_false)),
 				new Operator(">" ,  i,new Func((a,b)=>a==b?bool_true:bool_false)),
@@ -742,6 +799,10 @@ function compile (text,fileName){
 				new Operator("^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0))),
 			].map(v=>[v.name[0],v]));
 			maxPriority= i;
+		}
+		function parseNumber(word){
+			let base = word[1]=="b"?2:word[1]=="x"?16:10;
+			return !isNaN(+word)?+word:(([a,b])=>+a+b/base**b.length)(word.split("."));
 		}
 		(function getAssignments(patterns){
 			//find definisions
@@ -762,6 +823,9 @@ function compile (text,fileName){
 						if(!startLabels.has(param))startLabels.set(param.name[0],param);
 						param.value = match.value;
 					}
+				}
+				else if(match.type == "recursion"){
+					match.value = new RecurSetter();
 				}
 				else if(match.type == "function"){//assume pre-fix
 					if(match.pattern==">")match.startLabels = new Map(match.params.map(v=>[v.name[0],v]));
@@ -786,7 +850,6 @@ function compile (text,fileName){
 					match.value.id = match.id;
 				}
 			}
-			//find and link references
 			for(let [match,i,bracketParent] of forEachPattern()){
 				let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 				if(match.pattern == "="){//assignment
@@ -799,11 +862,11 @@ function compile (text,fileName){
 				}
 				else if(match.type == "argument" || match.type == "symbol" || match.type == "number"){
 					if(match.pattern == "$"){
-						match.value = +match.arg;
+						match.value = parseNumber(match.arg);
 						if(typeof match.value == "number"){//lambda parameter
 							//validate value
 							if(match.value>match.funcLevel){
-								throwError(match.id,"reference","the parameter number exceeds the amount of global scopes",a=>Error(a));
+								file.throwError(match.id,"reference","the parameter number exceeds the amount of global scopes",a=>Error(a));
 							}
 						}
 					}
@@ -812,7 +875,7 @@ function compile (text,fileName){
 						if(match.type!="number"){
 							//note: number literals & other predefined values can be used as either an Int or a parameter reference
 							if(!param){
-								throwError(match.id,"reference","label: '"+match.arg+"' is undefined",a=>Error(a));
+								file.throwError(match.id,"reference","label: '"+match.arg+"' is undefined",a=>Error(a));
 							}
 							addRefParam(match,parents,param);
 							//assert: param != undefined
@@ -840,20 +903,33 @@ function compile (text,fileName){
 							if(match.value==undefined)throw Error("compiler error");
 						}
 						else if(!param){//if not overwritten && is number literal
-							match.value = new Int(+match.arg);
+							match.value = new Int(parseNumber(match.arg));
 						}
 					}
+					match.parent.value.push(match.value);
+				}
+				else if(match.type=="recursion"){
 					match.parent.value.push(match.value);
 				}
 				else if(match instanceof BracketPattern){
 					match.parent.value.push(match.value);
 				}
 			}
+			//find and link references
+			for(let [match,i,bracketParent] of forEachPattern()){
+				if(match.pattern=="::"){
+					if(match.list?.length<2)throw Error("compiler error: should have been delt with in function 'getPatterns()'. Try looking in there for bugs.");
+					match.value.value = match.value[0];
+					match.value.recur = match.value[1];
+					match.value.pop();
+					match.value.pop();
+				}
+			}
 			//handle operator priorities
 			for(let [value,i] of 
 				function*(){
 					yield [context.value,0];
-					yield*forEachTree(context.value,v=>v instanceof Array?v:[]);
+					yield*forEachTree(context.value,v=>!(v instanceof RecurSetter)&&v instanceof Array?v:[]);
 				}()
 			){
 				if(!(value instanceof Array && value.length>0))continue;
@@ -884,11 +960,11 @@ function compile (text,fileName){
 		}(patterns.list));
 		return context;
 	}
-	let regex =/[λ]|\b\w+\b|"[^"]*"|(?:[!%^&*-+~<>])=|[+\-*&|^=><]{2}|[^\s]|\s+|\/\/.*|\/\*[\s\S]*\*\//g;
+	let regex =/[λ]|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"[^"]*"|::|(?:[!%^&*-+~<>])=|([+\-*&|^=><])\1?|[^\s]|\s+|\/\/.*|\/\*[\s\S]*\*\//g;
 	let lines = text.split("\n");
 	const fileID = files.getDataFromID.length;
 	const words = text.match(regex)??[];
-	const file = new FileData({words,lines,id:fileID});
+	const file = new FileData({text,words,lines,id:fileID});
 	files.list.set(fileName,file);
 	words.reduce((s,v,i)=>{
 		s.word = v;
@@ -904,16 +980,12 @@ function compile (text,fileName){
 	},{line:1,column:1,file,word:"",recurs:0,maxRecur:Infinity});
 	let main=()=>{
 		const tree = treeParse(words);
-		//note: extra methods are added so that context can be used as an Expression.
-		const context = Object.assign(parseContexts(tree),{
-			call(...args){return this.value.call(...args)},
-			eval(...args){return this.value.eval(...args)},
-		});
+		const context = parseContexts(tree);
 		const expression = context.value;
 		Object.assign(file,{tree,context,expression})
-		return context;//parse(tree);
+		return file;//parse(tree);
 	}
-	return tryCatch(main,new Lazy(Lambda.null));
+	return tryCatch(main,file);//new Lazy(Lambda.null));
 }
 function tryCatch (foo,exceptionValue){
 	if(TEST){
@@ -927,7 +999,7 @@ function tryCatch (foo,exceptionValue){
 	}
 }
 tryCatch(()=>{
-	loga(compile("1+1*3").eval())
+	loga(compile("2 2::2"))
 });
 //loga(Y.call(new Calc((f,n)=>n==0?1:n*f.call(n-1))).call(new Int(4)));
 //λ
