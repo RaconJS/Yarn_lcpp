@@ -188,10 +188,10 @@
 		(non_int>(v::r>r)(a>a)::non_int) //converts input to an integer
 //recursion '::' :
 	//about max recursion:
-		//1. Every function call has an associated max recursion.
+		//1. Every function call in has an associated max recursion.
 		//2. The max recursion of a function call must be known before it is called.
 		//3. The max recursion belongs to the piece of source code itself. This is since the amount of source code is finite.
-		//4. The max recursion can only be decreased unless there is no max recursion set.
+		//4. The max recursion can only be decreased (and not increased) unless there is no max recursion set.
 		//5. The amount of times a function recurs can worked out by looking at the callstack.
 		//6. If a function call would result in it recuring more than allowed, then it returns an empty context '()'.
 	//These restrictions exist so that functions always hault.
