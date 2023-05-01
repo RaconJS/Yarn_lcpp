@@ -1,5 +1,5 @@
 //TEST
-const TEST = false;
+const TEST = true;
 //UNTESTED
 //TODO
 //classes
@@ -20,6 +20,7 @@ const TEST = false;
 				findHighestContext(this);
 		}
 		constructor(...exps){
+			//if(exps.includes(undefined))throw Error("compiler error");
 			super(exps.length);
 			Object.assign(this,exps);
 		}
@@ -44,7 +45,7 @@ const TEST = false;
 				//typeof v == "string"?:
 				v instanceof Lambda?Object.assign(new Lazy(v),{context}):
 				v instanceof Lazy?v:
-				v instanceof RecurSetter?Object.assign(new Lazy(v.exp),{context,recur:+this.toInt(v.recur)??0}):
+				v instanceof RecurSetter?Object.assign(new Lazy(v.value),{context,recur:+this.toInt(v.recur)??0}):
 				v instanceof Int?v:
 				v instanceof NameSpace?v:
 				v instanceof List?v:
@@ -63,7 +64,8 @@ const TEST = false;
 				s.call(v,context,stack)
 			);
 			if(ans instanceof Lazy){
-				while(ans.length == 1 && ans[0] instanceof Lazy ||(!("call" in (ans[0]??{})) && ans[0] instanceof Array))ans=ans[0];//assume: is Tree
+				
+				while(ans.length == 1 && ans[0] instanceof Lazy || ans[0].constructor instanceof Array)ans=ans[0];//assume: is Tree
 				//ans:Lazy|Array
 				if(ans.length == 0)ans = Lambda.null;
 			}
@@ -110,6 +112,7 @@ const TEST = false;
 			if(id!=undefined){
 				this.unshift(id);
 			}
+			else return true;
 			//recurSetter:RecurSetter
 			let recursLeft = recurSetter instanceof RecurSetter?+recurSetter.getRecursLeft()??0:1;
 			let data = files.getDataFromID[id];
@@ -124,6 +127,7 @@ const TEST = false;
 			return isValid;
 		}
 		remove(lambda){
+			if(lambda.id==undefined)return;
 			let data = files.getDataFromID[lambda.id];
 			if(data.recurs==0)throw Error("compiler error:"
 				+" Possibly, unmatching amounts of add() and remove()."
@@ -216,7 +220,7 @@ const TEST = false;
 				return Lazy.toInt(this.recur);
 			}
 			call(arg,context,stack){
-				return this.value.call(...args);
+				return this.value.call(arg,context,stack);
 			}
 			eval(stack){
 				return this.value.eval(stack)
@@ -249,7 +253,7 @@ const TEST = false;
 		constructor(value){
 			super(value|0);
 		}
-		static Part1 = class extends Lazy{
+		static Part1 = class extends Exp{
 			constructor(value,arg_f){
 				super();
 				this.value = value;//:Number|Int
@@ -356,7 +360,6 @@ function compile (text,fileName){
 	if(fileName!=undefined&&files.list.has(fileName)){
 		return files.list.get(fileName).context;
 	}
-
 	function throwError_noLine(type,errorMessage,error){
 		return error(
 			"lc++ ERROR:\n"
@@ -395,7 +398,6 @@ function compile (text,fileName){
 			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
 			line = line.substr(whiteSpace.length)//[whiteSpace,line]
 			let lineLen = (""+data.line).length;
-			loga(data)
 			return ""
 				+data.line+" |" +line+"\n"
 				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteSpace.length)+"^".repeat(data.word.length)+" "+msg
@@ -410,7 +412,8 @@ function compile (text,fileName){
 		for(let i=0;i<words.length;i++){
 			let word = words[i];
 			let value = [word,fileID+i,file];
-			if(word.match(/[(\[{]/)){
+			if(word.match(/^\//))list.push(value);
+			else if(word.match(/[(\[{]/)){
 				stack.push(list);
 				list.push(value,list = []);
 			}
@@ -424,7 +427,7 @@ function compile (text,fileName){
 			}
 			else list.push(value);
 		}
-		if(stack.length>0)file.throwError(i,"syntax", "unballanced brackets: Too many opening brackets", a=>Error(a));
+		if(stack.length>0)file.throwError(fileID+words.length-1,"syntax", "unballanced brackets: Too many opening brackets", a=>Error(a));
 		return list;
 	}
 	function parseContexts(tree){
@@ -434,18 +437,12 @@ function compile (text,fileName){
 			const getID = (tree,i)=>tree[i]?.[1];
 			class Pattern{
 				constructor(data){
-					Object.assign(this,data)
-					if(this.list){//if this has own context
-						Object.assign(this.list,{
-
-						})
-					}
+					Object.assign(this,data);
 				}
 				id;//:[]SyntaxTree
 				type="operator";//:"operator"|"word"|"number"|"symbol"|"function"|"assignment"
 				parent;//:BracketPattern
 				isFirst;//:bool ; Is true if this is the start of a list, or can be used as the starting function.
-
 				//optionals
 					pattern;//:?String & word
 					options;//:?String & joined words
@@ -495,11 +492,12 @@ function compile (text,fileName){
 					pattern = "$";
 					++i;
 					if(getWord(tree,i).match(numberRegex)){
-						params = [tree[i]];
+						let params = [tree[i]];
 						++i;
+						return new Pattern({...getObj(),params})
 					}
 					else {i=oldI;pattern = ""}
-					return new Pattern(getObj())
+					return new Pattern({...getObj()})
 				}
 				else if(word.match(numberRegex)){
 					pattern = word;
@@ -675,7 +673,7 @@ function compile (text,fileName){
 			}
 		}
 		let context = new BracketPattern;
-		getPatterns(tree,context);//mutates context
+		[...getPatterns(tree,context)];//mutates context
 		function* forEachTree(context,getTree){//isTree:node->Tree?
 			const tree = getTree(context);
 			for(let i=0;i<tree.length;i++){
@@ -737,9 +735,10 @@ function compile (text,fileName){
 			;
 		}
 		class Operator extends Param{
-			constructor(name,priority,foo){
+			constructor(name,priority,foo,length=2){
 				super({name:[name,-1],priority,owner:context,value:foo});
 				this.value.operatorParamObj = this;//:truthy
+				this.length = length;
 			}
 			isParsed=false;
 			//name:[String,Number]
@@ -747,15 +746,16 @@ function compile (text,fileName){
 			//owner:Pattern
 			//value:Lazy
 			//priority:Number
+			//length:Number
 		}
 		let maxPriority;
 		{
 			//applies to Patterns with type = "operator"
 			context.value = new Lazy;
 			let i=0;
-			const bool_true = new Lambda(new Lambda(1));
-			const bool_false = new Int(0);
-			const equality = (a,b)=>{//(Exp,Exp)-> Lambda bool
+			const bool_true = new class True extends Lambda{}(new Lambda(1));
+			const bool_false = new class False extends Lambda{}(new Lambda(0));//new Int(0);
+			const equality = (a,b)=>//(Exp,Exp)-> Lambda bool
 				a==b?bool_true
 				:+a==+b?bool_true//assume: NaN!=NaN
 				:a instanceof Array?
@@ -764,31 +764,31 @@ function compile (text,fileName){
 					:a.length != b.length?bool_false
 					:a.reduce((s,v,i)=>s==bool_false?s:equality(a[i],b[i]),bool_true)
 				:bool_false
-			}
+			;
 			context.startLabels= new Map([
 				//TODO: allow '!!a' -> '(! (! a))'
-				new Operator("!" ,  i,new Func((a)=>Lazy.toInt(a)==0||a==Lambda.null?bool_true:bool_false)),
-				new Operator("~" ,  i,new Calc((a)=>~a)),
-				new Operator("++",  i,new Calc((a)=>a+1)),
-				new Operator("--",  i,new Calc((a)=>a+1)),
-				new Operator("&" ,++i,new Calc((a,b)=>a&b)),
-				new Operator("|" ,  i,new Calc((a,b)=>a|b)),
-				new Operator("^" ,  i,new Calc((a,b)=>a^b)),
-				new Operator("%" ,  i,new Calc((a,b)=>a%b)),
-				new Operator("**",  i,new Calc((a,b)=>a**b)),
-				new Operator("*" ,++i,new Calc((a,b)=>a*b)),
-				new Operator("/" ,  i,new Calc((a,b)=>a/b)),
-				new Operator("+" ,++i,new Calc((a,b)=>a+b)),
-				new Operator("-" ,  i,new Calc((a,b)=>a-b)),
+				new Operator("!" ,  i,new Func(a=>Lazy.toInt(a)==0||a==Lambda.null?bool_true:bool_false),1),
+				new Operator("~" ,  i,new Calc((a)=>~a),1),
+				new Operator("++",  i,new Calc((a)=>a+1),2),
+				new Operator("--",  i,new Calc((a)=>a+1),2),
+				new Operator("&" ,++i,new Calc((a,b)=>a&b),2),
+				new Operator("|" ,  i,new Calc((a,b)=>a|b),2),
+				new Operator("^" ,  i,new Calc((a,b)=>a^b),2),
+				new Operator("%" ,  i,new Calc((a,b)=>a%b),2),
+				new Operator("**",  i,new Calc((a,b)=>a**b),2),
+				new Operator("*" ,++i,new Calc((a,b)=>a*b),2),
+				new Operator("/" ,  i,new Calc((a,b)=>a/b),2),
+				new Operator("+" ,++i,new Calc((a,b)=>a+b),2),
+				new Operator("-" ,  i,new Calc((a,b)=>a-b),2),
 
-				new Operator("==",++i,new Func((a,b)=>equality(a,b))),
-				new Operator("<" ,  i,new Func((a,b)=>a==b?bool_true:bool_false)),
-				new Operator(">" ,  i,new Func((a,b)=>a==b?bool_true:bool_false)),
-				new Operator(">=",  i,new Func((a,b)=>a==b?bool_true:bool_false)),
-				new Operator("<=",  i,new Func((a,b)=>a==b?bool_true:bool_false)),
-				new Operator("&&",++i,new Lambda(new Lambda(1,0,1))),
-				new Operator("||",  i,new Lambda(new Lambda(1,1,0))),
-				new Operator("^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0))),
+				new Operator("==",++i,new Func(a=>new Func(b=>equality(a,b))),2),
+				new Operator("<" ,  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
+				new Operator(">" ,  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
+				new Operator(">=",  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
+				new Operator("<=",  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
+				new Operator("&&",++i,new Lambda(new Lambda(1,0,1)),2),
+				new Operator("||",  i,new Lambda(new Lambda(1,1,0)),2),
+				new Operator("^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2),
 			].map(v=>[v.name[0],v]));
 			maxPriority= i;
 		}
@@ -855,7 +855,7 @@ function compile (text,fileName){
 				}
 				else if(match.type == "argument" || match.type == "symbol" || match.type == "number"){
 					if(match.pattern == "$"){
-						match.value = parseNumber(match.arg);
+						match.value = parseNumber(match.params[0][0]);
 						if(typeof match.value == "number"){//lambda parameter
 							//validate value
 							if(match.value>match.funcLevel){
@@ -935,12 +935,13 @@ function compile (text,fileName){
 						if(!(operator.operatorParamObj instanceof Operator))continue;
 						if(!(operator.operatorParamObj.priority == priority))continue;
 						let foo = operator.func;
-						let useLeftArg = foo.length == 2;
+						let paramLen = foo?.length ?? operator.operatorParamObj.length;
+						let useLeftArg = paramLen == 2;
 						if(i<list.length-1)//has right argument
 						if( (i>0&& !operator.operatorParamObj.isFirst) || !useLeftArg){
 							let newOperation = [operator];
-							let splice=list.splice(i-useLeftArg,foo.length+1);
-							newOperation.push(...(foo.length==2?[splice[0],splice[2]]:[splice[1]]));
+							let splice=list.splice(i-useLeftArg,paramLen+1);
+							newOperation.push(...(paramLen==2?[splice[0],splice[2]]:[splice[1]]));
 							list.splice(i-useLeftArg,0,newOperation);
 							i-=useLeftArg;
 							//'a + b' -> '(+ a b)'
@@ -949,11 +950,10 @@ function compile (text,fileName){
 					}
 				}
 			}
-
 		}());
 		return context;
 	}
-	let regex =/[λ]|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"[^"]*"|::|(?:[!%^&*-+~<>])=|([+\-*&|^=><])\1?|[^\s]|\s+|\/\/.*|\/\*[\s\S]*\*\//g;
+	let regex =/\s+|\/\/.*|\/\*[\s\S]*\*\/|λ|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"[^"]*"|::|(?:[!%^&*-+~<>])=|([+\-*&|^=><])\1?|[^\s]/g;
 	let lines = text.split("\n");
 	const fileID = files.getDataFromID.length;
 	const words = text.match(regex)??[];
@@ -991,10 +991,10 @@ function tryCatch (foo,exceptionValue){
 		return exceptionValue;
 	}
 }
-tryCatch(()=>{
+tryCatch(()=>{//λ
 	loga(compile(`
 		Y = f>r (x>f(r x)) r=a>a a,
-		factorial = !>x>x==1,
-		factorial
+		factorial = Y !>x> (== x 0) (1) (! (-- x)),
+		factorial 3
 	`).eval());
 });
