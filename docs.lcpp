@@ -78,7 +78,7 @@
 		? λ longExpression
 		$ number
 		number
-		longExpression expression :: expression
+		expression :: longExpression
 		longExpression < $ number
 		longExpression < label
 		longExpression < label $ number
@@ -185,35 +185,43 @@
 	//Integers is it's own data type although they are meant to look like normal lambda functions.
 	//regular lambda functions can be converted into integers by taking advantage of the recursion system.
 	//e.g.
-		(non_int>(v::r>r)(a>a)::non_int) //converts input to an integer
+		(bool>bool 1 bool>bool 2 bool>bool 3)
+		53
+		1
 //recursion '::' :
-	//about max recursion:
+	//about max recursion rules:
 		//1. Every function call in has an associated max recursion.
 		//2. The max recursion of a function call must be known before it is called.
-		//3. The max recursion belongs to the piece of source code itself. This is since the amount of source code is finite.
+		//3. The max recursion belongs to the piece of source code itself.
+			//This is since the amount of source code is finite.
+			//This is to prevent infinite recursion.
 		//4. The max recursion can only be decreased (and not increased) unless there is no max recursion set.
+			//This is to prevent infinite recursion.
 		//5. The amount of times a function recurs can worked out by looking at the callstack.
-		//6. If a function call would result in it recuring more than allowed, then it returns an empty context '()'.
+		//6. If a function call would result in it recuring more than allowed, then a recursion error is thrown.
 	//These restrictions exist so that functions always hault.
-	//pattern 'a :: r' :
+	//pattern 'r :: ' :
 		//This is the recursion pattern.
-		//Both 'a' and 'r' are single expressions.
-		//'r' sets the maximum amount of times this piece of code is allowed to recur.
+		//'r' is a single expression.
+			//e.g.
+				//For example This can be a pair of brackets or a single value or parameter.
+				1 :: (a>a a)(a> a a)
+				(1) :: (a>a a)(a> a a)
+				x> x :: (a>a a)(a> a a)
+		//Expression 'r' is converted to an integer.
+		//'r' represents the maximum amount of times code after it is allowed to recur.
 		//By default 'r' == 1
 			//e.g.
 			(a> a a)
 			//is the same as
-			(a> a a::1)
-		//'a' must be argument
-			//e.g.
-			(a>a::4 a) //here the '::4' does not affect it
+			(1 :: (a> a a)) //note: the 'extra brackets are needed to prevent the pattern '
 		//if 'r' isn't a number then the value is converted into a number.
 			//This is done by calling the lambda with an increment function and the number 0.
-			//This would convert a church numeral into an Integer, which it is used.
+			//This is used since it converts church numerals into Integer values.
 			//e.g.
-			(a>a a::(inc>zero>inc(inc(0))))
+				(a> (inc>zero>inc(inc(0)))::a a)
 			//If after this the result still isn't an integer value, then it returns 0 and the lambda won't be called.
-	//pattern 'a :: r >'
+	//pattern 'r :: a >'
 		//Here 'a' and 'r' are parameters in the same function.
 		//'a' is the normal function.
 		//'r' is the recursion value passed in. If no 'a::r' pattern was used to call the function, then it returns then 'r' would be '1'. 1 is the default max recursion.
@@ -224,11 +232,11 @@
 				n>
 					(Y_ish factorial>
 						//main funtion starts here
-						n::r>
+						n>
 							is0 n 
 								1
-								multiply n (factorial factorial (decrement n) :: (increment n))
-					)
+								multiply n (factorial factorial n::(decrement n))
+					)n
 			)
 			//set up constants
 			(a>b> f>x> a (b f) x) //multiply
