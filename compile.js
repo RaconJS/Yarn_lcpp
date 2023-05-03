@@ -373,7 +373,7 @@ const files={
 				+"error"+": "+errorMessage+"\n"
 				+(!stack?"":
 					"stack:\n"
-					+stack.map(v=>files.getDataFromID[v].file.displayWordInLine(v,"")).join("\n")
+					+stack.map(v=>files.getDataFromID[v].file.displayWordInLine(v,"at")).join("\n")
 				)
 			);
 		}
@@ -386,7 +386,7 @@ const files={
 			let lineLen = (""+data.line).length;
 			return ""
 				+data.line+" |" +line+"\n"
-				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteLen)+"^".repeat(data.word.length)+"`"+data.word+"`"+" "+msg
+				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteLen)+"^".repeat(data.word.length)+" "+msg
 			;
 		}
 		call(arg,context = new Context,stack = new Stack){return this.value.call(arg,context,stack)??Lambda.null}
@@ -1050,8 +1050,7 @@ function tryCatch (foo,exceptionValue){
 }
 tryCatch(()=>{//λ
 	let s = new Stack;
-	compile(`\n  a`);
-	if(0)loga(compile(`
+	loga(compile(`
 		l>(
 			i = n>n(++)0,
 			Y = f>r (x>f(x x))::10 r=a>a a,
