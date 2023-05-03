@@ -1,11 +1,11 @@
 //TEST
-const TEST = true;
+const TEST = false;
 //UNTESTED
 //TODO
 //classes
 	//Exp: Lambda'λ' | Lazy'()' | Recur'::'
 	//OutExp: Lazy
-	function findHighestContext(list){//list:Exp[]
+	function findHighestContext(list){//list:Exp[] ; for memory management. finds the deepest parent referenced by an expression
 		return list.reduce((s,v)=>Math.max(s,typeof v=="number"?v:s.findHighestContext()),-1);
 	}
 	class Exp{
@@ -27,9 +27,9 @@ const TEST = true;
 		//note: all arguments are optional in curtain cases.
 		call(arg,context,stack){//(arg:Lazy,Stack)->Lazy
 			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
-			return this.eval(stack).call(arg,this.context,stack);
+			else return this.eval(stack).call(arg,this.context,stack);
 		}//(a>a)(a>a a)
-		eval(stack){
+		eval(stack=new Stack()){
 			let ans = this;
 			{
 				//[x],Lazy(x) -> x; where x:Lazy|Array
@@ -43,14 +43,13 @@ const TEST = true;
 				typeof v == "number"?context.getValue(v):
 				typeof v == "string"?v://simple raw string cannot be called
 				//typeof v == "string"?:
-				v instanceof Lambda?Object.assign(new Lazy(v),{context}):
+				v instanceof Lambda?Object.assign(new Lazy(v),{context,id:v.id}):
 				v instanceof Lazy?v:
-				v instanceof RecurSetter?Object.assign(new Lazy(v.value),{context,recur:+this.toInt(v.recur)??0}):
 				v instanceof Int?v:
 				v instanceof NameSpace?v:
 				v instanceof List?v:
-				v instanceof RecurSetter?v.context?v:new RecurSetter(v.value,v.recur,context):
-				v instanceof Array?Object.assign(new Lazy(...v),{context}):
+				v instanceof RecurSetter?v.context?v:new RecurSetter(v.value,v.recur,context,v.id):
+				v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id}):
 				typeof v.call == "function"?v:
 				v instanceof Object?(v=>{
 					let labels={};
@@ -61,7 +60,7 @@ const TEST = true;
 				})(v):
 				v//uncallable object
 			).reduce((s,v)=>
-				s.call(v,context,stack)
+				stack.doOnStack(s,v,stack=>[0,s.call(v,context,stack)][1])
 			);
 			if(ans instanceof Lazy){
 				
@@ -71,14 +70,14 @@ const TEST = true;
 			}
 			return ans;
 		}
-		toInt(foo){//foo:{call(inc)->{call(0)->Number}}
-			return this.constructor.toInt(foo);
+		toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
+			return this.constructor.toInt(foo,stack);
 		}
-		static toInt(foo){//foo:{call(inc)->{call(0)->Number}}
+		static toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
 			if(foo instanceof Int)return foo;
 			const inc = Int.increment;
 			const zero = new Int(0);
-			return foo.call(inc).call(zero);
+			return foo.call(inc,undefined,stack).call(zero,undefined,stack);
 		}
 	}
 	class Context{
@@ -114,29 +113,43 @@ const TEST = true;
 			}
 			else return true;
 			//recurSetter:RecurSetter
-			let recursLeft = recurSetter instanceof RecurSetter?+recurSetter.getRecursLeft()??0:1;
+			const stack = this;
+			let recursLeft = recurSetter instanceof RecurSetter?+recurSetter.getRecursLeft(stack)??0:1;
 			let data = files.getDataFromID[id];
-			data.maxRecur = Math.min(data.maxRecur,data.recurs+recursLeft);
-			if(isNaN(data.maxRecur)||data.maxRecur==Infinity)data.maxRecur = data.recurs;
+			let maxRecur = data.recurs+recursLeft;
 			let [isValid,recurs] = this.stackCheck(data.maxRecur);
 			data.recurs = recurs;
+			if(recurs <= 1 || maxRecur<data.maxRecur) data.maxRecur = maxRecur;
+			if(isNaN(data.maxRecur)||data.maxRecur==Infinity)data.maxRecur = data.recurs;
 			if(!isValid){
 				this.shift();
 				data.recurs--;
 			}
 			return isValid;
 		}
+		doOnStack(exp,arg,foo){
+			let stackableObject = arg;//expression that will be added onto the stack.
+			if(!this.add(stackableObject,arg)){
+				//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
+				//recursion detected
+				if(1){
+					let file = files.getDataFromID[stackableObject.id].file;
+					file.throwError(stackableObject.id,"recursion","unbounded recursion detected",a=>Error(a),this);
+				}else return Lambda.null;
+			}else {}
+			let ans = foo(this);
+			this.remove(stackableObject);
+			return ans;
+		}
 		remove(lambda){
 			if(lambda.id==undefined)return;
+			this.shift()
 			let data = files.getDataFromID[lambda.id];
 			if(data.recurs==0)throw Error("compiler error:"
 				+" Possibly, unmatching amounts of add() and remove()."
 				+" data.recurs should not be modified elsewhere"
 			);
-			if(!this.includes(lambda.id)){
-				data.maxRecur = Infinity;
-			}
-			this.shift();
+			if(!this.includes(lambda.id))data.maxRecur = Infinity;
 		}
 		stackCheck(maxRecur){//only checks last item
 			//:Number->[bool,Number]
@@ -150,8 +163,8 @@ const TEST = true;
 				if(this[i]!=id){i++;continue}
 				else i++;
 				if(i+lastId>this.length){return [true,recurs]}
-				if(lastId==0){return [false,recurs]}
-				else for(let i1=0;i1<lastId;[i1++,i++]){
+				if(lastId>0)
+				for(let i1=0;i1<lastId;[i1++,i++]){
 					if(this[i]!=this[i1+1]){isMatch=false;break;}
 				}
 				if(isMatch){
@@ -177,25 +190,9 @@ const TEST = true;
 				return this.highestContext?this.highestContext:
 					findHighestContext(this);
 			}
-			call(arg=undefined,context=new Context(),stack=new Stack()){
-				let recurObj;
-				if(arg instanceof RecurSetter){
-					arg=arg.value;
-				}
-				if(!stack.add(this,arg)){
-					//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
-					//return Lambda.null;
-					//recursion detected
-					if(1){
-						let file = files.getDataFromID[this.id].file;
-						file.throwError(this.id,"recursion","unbounded recursion detected",a=>Error(a),stack)
-					}
-				}else {}
+			call(arg=undefined,context=new Context(),stack){
 				context = new Context(context,arg);
-				let recur = arg instanceof Lazy?arg.recur:1;
-				let ans = Object.assign(new Lazy(...this),{context,recur,id:this.id}).eval(stack);
-				stack.remove(this);
-				return ans;
+				return Object.assign(new Lazy(...this),{context,id:this.id}).eval(stack);
 			}
 			eval(){return this}
 			toJS(){
@@ -208,22 +205,23 @@ const TEST = true;
 			}
 		}
 		class RecurSetter extends Array{//'value::recur'
-			constructor(value,recur,context=undefined){
+			constructor(value,recur,context=undefined,id){
 				super(0);
 				Object.assign(this,{
 					value,//:Exp
 					recur,//:Exp
 					context,//:Context?
+					id,//:Number
 				});
 			}
-			getRecursLeft(){//()-> finite Number
-				return Lazy.toInt(this.recur);
+			getRecursLeft(stack){//()-> finite Number
+				return Lazy.toInt(this.recur,stack);
 			}
 			call(arg,context,stack){
-				return this.value.call(arg,context,stack);
+				return this.eval(stack).call(arg,context,stack);
 			}
 			eval(stack){
-				return this.value.eval(stack)
+				return Object.assign(new Lazy(this.value),{context:this.context,id:this.id}).eval(stack);
 			}
 		}
 		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
@@ -249,6 +247,16 @@ const TEST = true;
 			}
 			eval(){return this}
 		}
+	class Func{//arraw function
+		constructor(func,id){
+			this.func=func;
+		}
+		//isOperater:bool&Operator?
+		call(arg,context,stack){//Int->Int-> ... Int-> Int
+			return this.func(arg,context,stack);
+		}
+		eval(stack){return this}
+	}
 	class Int extends Number{
 		constructor(value){
 			super(value|0);
@@ -278,30 +286,20 @@ const TEST = true;
 		}
 		eval(){return this}
 	}
-	class Calc{//calculation
-		constructor(func,args=[]){
-			this.func=func;//:(...Number[])->Number
+	class Calc extends Func{//calculation
+		constructor(func,args=[],stack=undefined){
+			super(func)//func:(...Number[])->Number
 			this.args = args;//:Lazy[]
 			if(args.length>=func.length){
-				const ans = this.func(...args.map(v=>Lazy.toInt(v)));
-				return isNaN(ans)?Lambda.null:new Int(ans);
+				const ans = this.func(...args.map(v=>Lazy.toInt(v,stack)));
+				return isNaN(ans)?Lambda.null:typeof ans=="number"?new Int(ans):ans;//can return custom Exp objects.
 			}
 		}
 		//isOperater:bool&Operator?
-		call(arg){//Int->Int-> ... Int-> Int
-			return new this.constructor(this.func,[...this.args,arg])
-		}
-		eval(){return this}
-	}
-	class Func{//arraw function
-		constructor(func){
-			this.func=func
-		}
-		//isOperater:bool&Operator?
 		call(arg,context,stack){//Int->Int-> ... Int-> Int
-			return this.func(arg,context,stack);
+			return new this.constructor(this.func,[...this.args,arg],stack)
 		}
-		eval(){return this}
+		eval(stack){return this}
 	}
 	class List extends Array{
 		constructor(...list){
@@ -313,10 +311,10 @@ const TEST = true;
 		}
 		eval(){return this}
 		list = [];
-		static get = new Func((array,index)=>
+		static get = new Func((array)=>new Func((index,context,stack)=>
 			!(array instanceof List)?Lambda.null
-			:array[Lazy.toInt(index)]??Lambda.null
-		)
+			:array[Lazy.toInt(index,stack)]??Lambda.null
+		))
 	}
 	class Reference extends Exp{//wrapper for Lazy
 		constructor(value,levelDif,id){
@@ -327,14 +325,12 @@ const TEST = true;
 		}
 		call(arg,context=new Context,stack){
 			//context??= new Context();
-			if(!context)throw Error(
-				"compiler error."
-				+"This might imply specialised combinators need,"
-				+"to pass in the context argument."
-			);
+			stack.unshift(this.id);
 			let value = Object.assign(new Lazy,this.value);
 			value.context=context.getContext(this.levelDif);
-			return value.call(arg,context,stack);
+			let ans = value.call(arg,context,stack);
+			stack.shift();
+			return ans;
 		}
 		eval(stack){return this.value.eval(stack);}
 	};
@@ -345,30 +341,11 @@ const TEST = true;
 //----
 function loga(...logs){console.log(...logs)}
 const files={
-	getDataFromID:[],//Map(id => Data{line,column,fileName,word})
-	list:new Map(),//Map(fileName => FileData)
-}
-function compile (text,fileName){
-	if(typeof text != "string")throw throwError_noLine("basic API","'compile' requires a string input as the source code.",a=>Error(a));
-	//types
-		//syntax, reference
-	fileName??=(()=>{
-		for(let [fileName,value] of files.list.entries())
-			if(value.text == text)return fileName;
-		return undefined;
-	})(); 
-	if(fileName!=undefined&&files.list.has(fileName)){
-		return files.list.get(fileName).context;
-	}
-	function throwError_noLine(type,errorMessage,error){
-		return error(
-			"lc++ ERROR:\n"
-			+type+" error"+"\n"
-			+errorMessage
-		);
-	}
-	class FileData{//data for errors
-		constructor(data){Object.assign(this,data);}
+	getDataFromID:[],//Map(id => Data{line,column,file,word})
+	list:new Map([]),//Map(fileName => FileData)
+	FileData:class FileData extends Exp{//data for errors
+		constructor(data){super();Object.assign(this,data);}
+		//note these properties are not used in the Expression classes.
 		text;//:string
 		id;//:number
 		words;//:string[]
@@ -396,15 +373,52 @@ function compile (text,fileName){
 			let data = files.getDataFromID[id];
 			let line = this.lines[data.line-1];
 			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
-			line = line.substr(whiteSpace.length)//[whiteSpace,line]
+			let whiteLen = Math.min(whiteSpace.length,data.column-1);
+			line = line.substr(whiteLen)//[whiteSpace,line]
 			let lineLen = (""+data.line).length;
 			return ""
-				+data.line+" |" +line+"\n"
-				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteSpace.length)+"^".repeat(data.word.length)+" "+msg
+				+data.line+" |" +line+" | "+data.word+"\n"
+				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteLen)+"^".repeat(data.word.length)+"`"+data.word+"`"+" "+msg
 			;
 		}
-		call(...args){return this.value.call(...args)??Lambda.null}
-		eval(...args){return this.value?.eval(...args)??Lambda.null}
+		call(arg,context = new Context,stack = new Stack){return this.value.call(arg,context,stack)??Lambda.null}
+		eval(stack = new Stack){return this.value.eval(stack)??Lambda.null}
+	},
+	addInbuilt(obj,name="SOURCE"){
+		let word = "SOURCE:[ "+name+" ]";
+		obj.id = this.getDataFromID.push({
+			line:1,column:1,word,
+			file:new this.FileData({expression:obj,lines:word}),
+		})-1;
+		return obj;
+	}
+};
+{
+	[
+		[Int.prototype,"Int"],
+		[Calc.prototype,"Calc"],
+		[Func.prototype,"Function"],
+		[Int.increment,"increment"],
+	].forEach(v=>files.addInbuilt(v))
+}
+function compile (text,fileName){
+	if(typeof text != "string")throw throwError_noLine("basic API","'compile' requires a string input as the source code.",a=>Error(a));
+	//types
+		//syntax, reference
+	fileName??=(()=>{
+		for(let [fileName,value] of files.list.entries())
+			if(value.text == text)return fileName;
+		return undefined;
+	})(); 
+	if(fileName!=undefined&&files.list.has(fileName)){
+		return files.list.get(fileName).context;
+	}
+	function throwError_noLine(type,errorMessage,error){
+		return error(
+			"lc++ ERROR:\n"
+			+type+" error"+"\n"
+			+errorMessage
+		);
 	}
 	function treeParse(words){
 		let list = [];
@@ -756,40 +770,42 @@ function compile (text,fileName){
 			const bool_true = new class True extends Lambda{}(new Lambda(1));
 			const bool_false = new class False extends Lambda{}(new Lambda(0));//new Int(0);
 			const equality = (a,b)=>//(Exp,Exp)-> Lambda bool
-				a==b?bool_true
-				:+a==+b?bool_true//assume: NaN!=NaN
+				(a=a.eval())==(b=b.eval())?bool_true
 				:a instanceof Array?
 					!(b instanceof Array)?bool_false
 					:!(a.constructor == b.constructor)?bool_false
 					:a.length != b.length?bool_false
 					:a.reduce((s,v,i)=>s==bool_false?s:equality(a[i],b[i]),bool_true)
+				:b instanceof Array?equality(b,a)
+				:+a==+b?bool_true//assume: NaN!=NaN
 				:bool_false
 			;
 			context.startLabels= new Map([
 				//TODO: allow '!!a' -> '(! (! a))'
-				new Operator("!" ,  i,new Func(a=>Lazy.toInt(a)==0||a==Lambda.null?bool_true:bool_false),1),
-				new Operator("~" ,  i,new Calc((a)=>~a),1),
-				new Operator("++",  i,new Calc((a)=>a+1),2),
-				new Operator("--",  i,new Calc((a)=>a+1),2),
-				new Operator("&" ,++i,new Calc((a,b)=>a&b),2),
-				new Operator("|" ,  i,new Calc((a,b)=>a|b),2),
-				new Operator("^" ,  i,new Calc((a,b)=>a^b),2),
-				new Operator("%" ,  i,new Calc((a,b)=>a%b),2),
-				new Operator("**",  i,new Calc((a,b)=>a**b),2),
-				new Operator("*" ,++i,new Calc((a,b)=>a*b),2),
-				new Operator("/" ,  i,new Calc((a,b)=>a/b),2),
-				new Operator("+" ,++i,new Calc((a,b)=>a+b),2),
-				new Operator("-" ,  i,new Calc((a,b)=>a-b),2),
-
-				new Operator("==",++i,new Func(a=>new Func(b=>equality(a,b))),2),
-				new Operator("<" ,  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
-				new Operator(">" ,  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
-				new Operator(">=",  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
-				new Operator("<=",  i,new Func(a=>new Func(b=>a==b?bool_true:bool_false)),2),
-				new Operator("&&",++i,new Lambda(new Lambda(1,0,1)),2),
-				new Operator("||",  i,new Lambda(new Lambda(1,1,0)),2),
-				new Operator("^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2),
-			].map(v=>[v.name[0],v]));
+				["!" ,  i,new Func((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
+				["~" ,  i,new Calc((a)=>~a),1],
+				["++",  i,new Calc((a)=>a+1),1],
+				["--",  i,new Calc((a)=>a-1),1],
+				["&" ,++i,new Calc((a,b)=>a&b),2],
+				["|" ,  i,new Calc((a,b)=>a|b),2],
+				["^" ,  i,new Calc((a,b)=>a^b),2],
+				["%" ,  i,new Calc((a,b)=>a%b),2],
+				["**",  i,new Calc((a,b)=>a**b),2],
+				["*" ,++i,new Calc((a,b)=>a*b),2],
+				["/" ,  i,new Calc((a,b)=>a/b),2],
+				["+" ,++i,new Calc((a,b)=>a+b),2],
+				["-" ,  i,new Calc((a,b)=>a-b),2],
+				["==",++i,new Func(a=>new Func(b=>equality(a,b))),2],
+				["<" ,  i,new Calc((a,b)=>a<b?bool_true:bool_false)],
+				[">" ,  i,new Calc((a,b)=>a>b?bool_true:bool_false)],
+				[">=",  i,new Calc((a,b)=>a>=b?bool_true:bool_false)],
+				["<=",  i,new Calc((a,b)=>a<=b?bool_true:bool_false)],
+				["&&",++i,new Lambda(new Lambda(1,0,1)),2],
+				["||",  i,new Lambda(new Lambda(1,1,0)),2],
+				["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
+			].map(v=>[
+				[files.addInbuilt(v[2],v[0]),v[2][Symbol("name")]=v[0],v=new Operator(...v)][2].name[0],v
+			]));
 			maxPriority= i;
 		}
 		function parseNumber(word){
@@ -935,10 +951,10 @@ function compile (text,fileName){
 						if(!(operator.operatorParamObj instanceof Operator))continue;
 						if(!(operator.operatorParamObj.priority == priority))continue;
 						let foo = operator.func;
-						let paramLen = foo?.length ?? operator.operatorParamObj.length;
+						let paramLen = operator.operatorParamObj.length;
 						let useLeftArg = paramLen == 2;
 						if(i<list.length-1)//has right argument
-						if( (i>0&& !operator.operatorParamObj.isFirst) || !useLeftArg){
+						if(i>0 && !operator.operatorParamObj.isFirst){
 							let newOperation = [operator];
 							let splice=list.splice(i-useLeftArg,paramLen+1);
 							newOperation.push(...(paramLen==2?[splice[0],splice[2]]:[splice[1]]));
@@ -957,7 +973,7 @@ function compile (text,fileName){
 	let lines = text.split("\n");
 	const fileID = files.getDataFromID.length;
 	const words = text.match(regex)??[];
-	const file = new FileData({text,words,lines,id:fileID});
+	const file = new files.FileData({text,words,lines,id:fileID});
 	files.list.set(fileName,file);
 	words.reduce((s,v,i)=>{
 		s.word = v;
@@ -992,9 +1008,15 @@ function tryCatch (foo,exceptionValue){
 	}
 }
 tryCatch(()=>{//λ
+	let s = new Stack;
 	loga(compile(`
-		Y = f>r (x>f(r x)) r=a>a a,
-		factorial = Y !>x> (== x 0) (1) (! (-- x)),
-		factorial 3
-	`).eval());
+		i = n>n(++)0,
+		Y = f>r (x>f(x x)::10)::10 r=a>a a,
+		factorial = Y !>x> (== x 0) 1 (* x (!(--x)::10)),
+		//factorial 4,
+		//i,(a>a a::10)(f>x>x==0 1 x * (f f (--x)::10)::10) 4
+		0 0, 0
+	`).value
+	//.eval()
+	);
 });
