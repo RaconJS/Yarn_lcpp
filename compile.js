@@ -1,5 +1,5 @@
 //TEST
-const TEST = false;
+const TEST = true;
 //UNTESTED
 //TODO
 //classes
@@ -77,7 +77,7 @@ const TEST = false;
 			if(foo instanceof Int)return foo;
 			const inc = Int.increment;
 			const zero = new Int(0);
-			return foo.call(inc,undefined,stack).call(zero,undefined,stack);
+			return (stack??new Stack).doOnStack(foo,foo,stack=>foo.call(inc,undefined,stack).call(zero,undefined,stack));
 		}
 	}
 	class Context{
@@ -102,6 +102,7 @@ const TEST = false;
 	}
 	Context.null = new Context();
 	class Stack extends Array{
+		currentMaxRecur = 1;//:Number
 		constructor(...exps){
 			super(exps.length);
 			Object.assign(this,exps);
@@ -114,13 +115,14 @@ const TEST = false;
 			else return true;
 			//recurSetter:RecurSetter
 			const stack = this;
-			let recursLeft = recurSetter instanceof RecurSetter?+recurSetter.getRecursLeft(stack)??0:1;
+			let recursLeft = recurSetter instanceof RecurSetter?+recurSetter.getRecursLeft(stack)??0:this.currentMaxRecur;
 			let data = files.getDataFromID[id];
 			let maxRecur = data.recurs+recursLeft;
 			let [isValid,recurs] = this.stackCheck(data.maxRecur);
 			data.recurs = recurs;
 			if(recurs <= 1 || maxRecur<data.maxRecur) data.maxRecur = maxRecur;
-			if(isNaN(data.maxRecur)||data.maxRecur==Infinity)data.maxRecur = data.recurs;
+			if(isNaN(+data.maxRecur)||data.maxRecur==Infinity)data.maxRecur = data.recurs;
+			this.currentMaxRecur = data.maxRecur;
 			if(!isValid){
 				this.shift();
 				data.recurs--;
@@ -143,8 +145,9 @@ const TEST = false;
 		}
 		remove(lambda){
 			if(lambda.id==undefined)return;
-			this.shift()
+			this.shift();
 			let data = files.getDataFromID[lambda.id];
+			this.currentMaxRecur = data.maxRecur;
 			if(data.recurs==0)throw Error("compiler error:"
 				+" Possibly, unmatching amounts of add() and remove()."
 				+" data.recurs should not be modified elsewhere"
@@ -279,6 +282,7 @@ const TEST = false;
 		static increment = {
 			//n> f>x>f(n f x)
 			call(arg,context,stack){return new Int((arg|0)+1)??this.lazyExpVersion.call(arg)},
+			eval(stack){return this},
 			lazyExpVersion:new Lambda(new Lambda(new Lambda(1,[2,1,0]))),
 		};
 		call(arg_f){//f>x>
@@ -292,7 +296,8 @@ const TEST = false;
 			this.args = args;//:Lazy[]
 			if(args.length>=func.length){
 				const ans = this.func(...args.map(v=>Lazy.toInt(v,stack)));
-				return isNaN(ans)?Lambda.null:typeof ans=="number"?new Int(ans):ans;//can return custom Exp objects.
+				const nullValue = Lambda.null;
+				return typeof ans == "number"?isNaN(ans)?nullValue:new Int(ans):ans??nullValue;//can return custom Exp objects.
 			}
 		}
 		//isOperater:bool&Operator?
@@ -307,14 +312,17 @@ const TEST = false;
 			Object.assign(this,list);
 		}
 		call(arg,context,stack){
-			;
+			return this.concat(arg,context,stack);
 		}
 		eval(){return this}
+		get = Object.assign(new Calc(index=>this[index|0]),{id:List.get.id});
+		concat = Object.assign(new Func((list,context,stack)=>stack.doOnStack(
+			(list=list.eval())instanceof List?Object.assign(new List(...this,...list),{id:this.id}):
+			Object.assign(new List(...this,list),{id:this.id})//'[1 2] 3' => '[1 2] [3]' => '[1 2 3]'
+		)));
 		list = [];
-		static get = new Func((array)=>new Func((index,context,stack)=>
-			!(array instanceof List)?Lambda.null
-			:array[Lazy.toInt(index,stack)]??Lambda.null
-		))
+		static get = {id:undefined};//is defined later
+		static get_expression = {id:undefined};//is defined later
 	}
 	class Reference extends Exp{//wrapper for Lazy
 		constructor(value,levelDif,id){
@@ -399,6 +407,8 @@ const files={
 		[Calc.prototype,"Calc"],
 		[Func.prototype,"Function"],
 		[Int.increment,"increment"],
+		[List.get,"List.get"],
+		[List.get_expression,"(list)> bool>bool head tail {head tail} = list,"]
 	].forEach(v=>files.addInbuilt(v))
 }
 function compile (text,fileName){
@@ -674,7 +684,10 @@ function compile (text,fileName){
 				else if(word == ","){
 					//yield comma;
 					//context.push(comma);
-					context = bracketContext;
+					let id = tree[i][1];
+					context = new BracketPattern({pattern:",",parent:bracketContext,list:[],isFirst,id});
+					yield context;
+					bracketContext.list.push(context);
 					isFirst=true;
 				}
 				else {
@@ -804,7 +817,7 @@ function compile (text,fileName){
 				["||",  i,new Lambda(new Lambda(1,1,0)),2],
 				["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
 			].map(v=>[
-				[files.addInbuilt(v[2],v[0]),v[2][Symbol("name")]=v[0],v=new Operator(...v)][2].name[0],v
+				[files.addInbuilt(v[2],v[0]),v[2].name=v[0],v=new Operator(...v)][2].name[0],v
 			]));
 			maxPriority= i;
 		}
@@ -819,6 +832,14 @@ function compile (text,fileName){
 				match.funcLevel = match.parent?.funcLevel || 0;
 				let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 				if(match.pattern == "="){//assignment
+				if(bracketParent.pattern==","){
+					{//set up assignment properties
+						bracketParent.startLabels ??= new Map();//String|Number => Param
+						bracketParent.currentLabels ??= new Map();
+						bracketParent.refs ??= new Set();//:Set(BracketPattern) where p.refs.get(x).refs.get(p) == undefined
+					}
+					bracketParent=bracketParent.parent;
+				}
 					//assume: bracketParent == match.parent
 					{//set up assignment properties
 						bracketParent.startLabels ??= new Map();//String|Number => Param
@@ -845,7 +866,7 @@ function compile (text,fileName){
 					match.value = bracketParent.value;
 				}
 				else if(match instanceof BracketPattern){
-					if(match.pattern=="()"){
+					if(match.pattern=="()" || match.pattern == ","){
 						match.value = [];
 					}
 					if(match.pattern=="[]"){
@@ -924,7 +945,7 @@ function compile (text,fileName){
 					match.parent.value.push(match.value);
 				}
 			}
-			//find and link references
+			//find and link references & remove empty ',' blocks
 			for(let [match,i,bracketParent] of forEachPattern()){
 				if(match.pattern=="::"){
 					if(match.list?.length<2)throw Error("compiler error: should have been delt with in function 'getPatterns()'. Try looking in there for bugs.");
@@ -932,6 +953,18 @@ function compile (text,fileName){
 					match.value.recur = match.value[1];
 					match.value.pop();
 					match.value.pop();
+				}
+			}
+			//remove empty commas caused by assignments e.g. '(a=1,b=2,a)' -> '(a=1,(b=2),(a))' -> '(()(a))' -> '(a)'
+			for(let [match,i,bracketParent] of forEachPattern()){
+				if(match.pattern==","){
+					if(match.list.length>0 && match.value.length==0)
+						while(match.parent.value.includes(match.value)){
+							match.parent.value.splice(match.parent.value.indexOf(match.value),1);
+						}
+					if(match.value.length == 1 || match.parent.value.indexOf(match.value) == 0){
+						match.parent.value.splice(match.parent.value.indexOf(match.value),1,...match.value);
+					}
 				}
 			}
 			//handle operator priorities
@@ -955,7 +988,7 @@ function compile (text,fileName){
 						let useLeftArg = paramLen == 2;
 						if(i<list.length-1)//has right argument
 						if(i>0 && !operator.operatorParamObj.isFirst){
-							let newOperation = [operator];
+							let newOperation = Object.assign([operator],{id:operator.id});
 							let splice=list.splice(i-useLeftArg,paramLen+1);
 							newOperation.push(...(paramLen==2?[splice[0],splice[2]]:[splice[1]]));
 							list.splice(i-useLeftArg,0,newOperation);
@@ -1011,12 +1044,9 @@ tryCatch(()=>{//λ
 	let s = new Stack;
 	loga(compile(`
 		i = n>n(++)0,
-		Y = f>r (x>f(x x)::10)::10 r=a>a a,
-		factorial = Y !>x> (== x 0) 1 (* x (!(--x)::10)),
-		//factorial 4,
-		//i,(a>a a::10)(f>x>x==0 1 x * (f f (--x)::10)::10) 4
-		0 0, 0
-	`).value
-	//.eval()
+		Y = f>r (x>f(x x))::10 r=a>a a,
+		factorial = Y !>x> x == 0 1 x * (! x)::10,
+		factorial 4,
+	`).eval()
 	);
 });
