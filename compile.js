@@ -218,7 +218,7 @@ const TEST = false;
 				});
 			}
 			getRecursLeft(stack){//()-> finite Number
-				return Lazy.toInt(new Lazy(this.recur),stack);
+				return Lazy.toInt(Object.assign(new Lazy(this.recur),{context:this.context,id:this.id}),stack);
 			}
 			call(arg,context,stack){
 				return this.eval(stack).call(arg,context,stack);
@@ -381,7 +381,7 @@ const files={
 			let data = files.getDataFromID[id];
 			let line = this.lines[data.line-1];
 			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
-			let whiteLen = Math.min(whiteSpace.length,data.column-1);
+			let whiteLen = whiteSpace.length;//,data.column-1);
 			line = line.substr(whiteLen)//[whiteSpace,line]
 			let lineLen = (""+data.line).length;
 			return ""
@@ -1023,7 +1023,7 @@ function compile (text,fileName){
 		s = {...s};
 		if(v.match("\n")){
 			s.line += (v.match(/\n/g)?.length??0);
-			s.column = (v.match(/.*$/g)?.length??0)+1;//assume: column >= 1
+			s.column = (v.match(/(?<=\n).+$/)?.[0]?.length??0)+1;//assume: column >= 1
 		}
 		else s.column+=v.length;
 		return s;
@@ -1050,11 +1050,12 @@ function tryCatch (foo,exceptionValue){
 }
 tryCatch(()=>{//λ
 	let s = new Stack;
-	loga(compile(`
+	compile(`\n  a`);
+	if(0)loga(compile(`
 		l>(
 			i = n>n(++)0,
 			Y = f>r (x>f(x x))::10 r=a>a a,
-			factorial = Y !>x> x == 0 1 (x * (!,--x::10)::10),
+			factorial = Y !>x> x == 0 1 (x * (!,--x::x)::x),
 			factorial 4,
 		)
 	`).call(new Func(v=>[loga(v.eval()),v][1])).eval()
