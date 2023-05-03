@@ -1,5 +1,5 @@
 //TEST
-const TEST = true;
+const TEST = false;
 //UNTESTED
 //TODO
 //classes
@@ -218,7 +218,7 @@ const TEST = true;
 				});
 			}
 			getRecursLeft(stack){//()-> finite Number
-				return Lazy.toInt(this.recur,stack);
+				return Lazy.toInt(new Lazy(this.recur),stack);
 			}
 			call(arg,context,stack){
 				return this.eval(stack).call(arg,context,stack);
@@ -373,7 +373,7 @@ const files={
 				+"error"+": "+errorMessage+"\n"
 				+(!stack?"":
 					"stack:\n"
-					+stack.map(v=>this.displayWordInLine(v,"")).join("\n")
+					+stack.map(v=>files.getDataFromID[v].file.displayWordInLine(v,"")).join("\n")
 				)
 			);
 		}
@@ -385,7 +385,7 @@ const files={
 			line = line.substr(whiteLen)//[whiteSpace,line]
 			let lineLen = (""+data.line).length;
 			return ""
-				+data.line+" |" +line+" | "+data.word+"\n"
+				+data.line+" |" +line+"\n"
 				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteLen)+"^".repeat(data.word.length)+"`"+data.word+"`"+" "+msg
 			;
 		}
@@ -396,7 +396,7 @@ const files={
 		let word = "SOURCE:[ "+name+" ]";
 		obj.id = this.getDataFromID.push({
 			line:1,column:1,word,
-			file:new this.FileData({expression:obj,lines:word}),
+			file:new this.FileData({expression:obj,lines:[word]}),
 		})-1;
 		return obj;
 	}
@@ -656,6 +656,7 @@ function compile (text,fileName){
 						let match_arg = context.list.pop();
 						match_arg.parent = match;
 						if(match_arg.isFirst)file.throwError(match.id,"syntax","Expected prefious argument or inisial funciton before recursion pattern `::`.",a=>Error(a));
+						match_arg.isFirst = true;
 						match.list.push(match_arg);
 					}
 					match.parent = context;
@@ -958,12 +959,13 @@ function compile (text,fileName){
 			//remove empty commas caused by assignments e.g. '(a=1,b=2,a)' -> '(a=1,(b=2),(a))' -> '(()(a))' -> '(a)'
 			for(let [match,i,bracketParent] of forEachPattern()){
 				if(match.pattern==","){
-					if(match.list.length>0 && match.value.length==0)
+					let index = match.parent.value.indexOf(match.value);
+					if(match.value.length == 0 && bracketParent[i+1]?.pattern != ",")//if(match.list.length>0 && match.value.length==0)
 						while(match.parent.value.includes(match.value)){
 							match.parent.value.splice(match.parent.value.indexOf(match.value),1);
 						}
-					if(match.value.length == 1 || match.parent.value.indexOf(match.value) == 0){
-						match.parent.value.splice(match.parent.value.indexOf(match.value),1,...match.value);
+					if(match.value.length == 1 || index == 0){
+						match.parent.value.splice(index,1,...match.value);
 					}
 				}
 			}
@@ -971,7 +973,13 @@ function compile (text,fileName){
 			for(let [value,i] of 
 				function*(){
 					yield [context.value,0];
-					yield*forEachTree(context.value,v=>!(v instanceof RecurSetter)&&v instanceof Array?v:[]);
+					yield*forEachTree(context.value,
+						v=>
+						v instanceof RecurSetter?[[v.value],[v.recur]]:
+						v instanceof Reference?v.value:
+						v instanceof Array?v:
+						[]
+					);
 				}()
 			){
 				if(!(value instanceof Array && value.length>0))continue;
@@ -1043,10 +1051,12 @@ function tryCatch (foo,exceptionValue){
 tryCatch(()=>{//λ
 	let s = new Stack;
 	loga(compile(`
-		i = n>n(++)0,
-		Y = f>r (x>f(x x))::10 r=a>a a,
-		factorial = Y !>x> x == 0 1 x * (! x)::10,
-		factorial 4,
-	`).eval()
+		l>(
+			i = n>n(++)0,
+			Y = f>r (x>f(x x))::10 r=a>a a,
+			factorial = Y !>x> x == 0 1 (x * (!,--x::10)::10),
+			factorial 4,
+		)
+	`).call(new Func(v=>[loga(v.eval()),v][1])).eval()
 	);
 });
