@@ -29,6 +29,9 @@ const TEST = false;
 			if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
 			else return this.eval(stack).call(arg,this.context,stack);
 		}//(a>a)(a>a a)
+		isReducable(exp){//returns to if exp.eval() != exp
+			return exp instanceof Lazy || exp instanceof RecurSetter;
+		}
 		eval(stack=new Stack()){
 			let ans = this;
 			{
@@ -48,7 +51,7 @@ const TEST = false;
 				v instanceof Int?v:
 				v instanceof NameSpace?v:
 				v instanceof List?v:
-				v instanceof RecurSetter?v.context?v:new RecurSetter(v.value,v.recur,context,v.id):
+				v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{recur:v.recur,context,id:v.id}):
 				v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id}):
 				typeof v.call == "function"?v:
 				v instanceof Object?(v=>{
@@ -60,10 +63,9 @@ const TEST = false;
 				})(v):
 				v//uncallable object
 			).reduce((s,v)=>
-				stack.doOnStack(s,v,stack=>[0,s.call(v,context,stack)][1])
+				stack.doOnStack(v,stack=>s.call(v,context,stack))
 			);
-			if(ans instanceof Lazy){
-				
+			if(ans instanceof Lazy || ans instanceof RecurSetter){
 				while(ans.length == 1 && ans[0] instanceof Lazy || ans[0].constructor instanceof Array)ans=ans[0];//assume: is Tree
 				//ans:Lazy|Array
 				if(ans.length == 0)ans = Lambda.null;
@@ -73,21 +75,28 @@ const TEST = false;
 		toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
 			return this.constructor.toInt(foo,stack);
 		}
-		static toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
+		static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
 			if(foo instanceof Int)return foo;
 			const inc = Int.increment;
 			const zero = new Int(0);
-			return (stack??new Stack).doOnStack(foo,foo,stack=>foo.call(inc,undefined,stack).call(zero,undefined,stack));
+			return foo.call(inc,undefined,stack).call(zero,undefined,stack);
 		}
 	}
 	class Context{
 		static null;//:Context
-		constructor(parent,argument){
+		constructor(parent,argument,maxRecur){
 			Object.assign(this,{
 				parent,//:Context?
 				argument,//:Lazy|{String->Lazy}|Lazy[]
+				maxRecur,//:maxRecur
 			});
 			this.chainLen=(parent?.level??-1)+1;//:Number
+		}
+		get maxRecur(){
+			return this.maxRecurValue??this.parent?.maxRecur;
+		}
+		set maxRecur(value){
+			this.maxRecurValue = value;
 		}
 		getContext(num){
 			let context = this;
@@ -102,36 +111,16 @@ const TEST = false;
 	}
 	Context.null = new Context();
 	class Stack extends Array{
-		currentMaxRecur = 1;//:Number
+		currentMaxRecur = 1;//:Number ; mutable by RecurSetter.prototype.eval
 		constructor(...exps){
 			super(exps.length);
 			Object.assign(this,exps);
 		}
-		add(lambda,recurSetter=undefined){
-			let id = lambda.id;
-			if(id!=undefined){
-				this.unshift(id);
-			}
-			else return true;
-			//recurSetter:RecurSetter
-			const stack = this;
-			let recursLeft = recurSetter instanceof RecurSetter?+recurSetter.getRecursLeft(stack)??0:this.currentMaxRecur;
-			let data = files.getDataFromID[id];
-			let maxRecur = data.recurs+recursLeft;
-			let [isValid,recurs] = this.stackCheck(data.maxRecur);
-			data.recurs = recurs;
-			if(recurs <= 1 || maxRecur<data.maxRecur) data.maxRecur = maxRecur;
-			if(isNaN(+data.maxRecur)||data.maxRecur==Infinity)data.maxRecur = data.recurs;
-			this.currentMaxRecur = data.maxRecur;
-			if(!isValid){
-				this.shift();
-				data.recurs--;
-			}
-			return isValid;
-		}
-		doOnStack(exp,arg,foo){
+		doOnStack(arg,foo){
 			let stackableObject = arg;//expression that will be added onto the stack.
-			if(!this.add(stackableObject,arg)){
+			const data = files.getDataFromID[stackableObject.id];
+			let oldData = {maxRecur:data?.maxRecur,recurs:data?.recurs};
+			if(!this.#add(stackableObject,arg)){
 				//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
 				//recursion detected
 				if(1){
@@ -140,19 +129,38 @@ const TEST = false;
 				}else return Lambda.null;
 			}else {}
 			let ans = foo(this);
-			this.remove(stackableObject);
+			this.#remove(stackableObject);
+			if(data)Object.assign(data,oldData);
 			return ans;
 		}
-		remove(lambda){
+		#add(exp,recurSetter=undefined){
+			let id = exp.id;
+			if(id!=undefined){
+				this.unshift(id);
+			}
+			else return true;
+			//recurSetter:RecurSetter
+			const stack = this;
+			let recursLeft= exp.context?.maxRecur ?? 1;
+			let data = files.getDataFromID[id];
+			let maxRecur = data.recurs+recursLeft;
+			let [isValid,recurs] = this.stackCheck(data.maxRecur);
+			data.recurs = recurs;
+			if(recurs <= 1 || maxRecur<data.maxRecur) data.maxRecur = maxRecur;
+			if(!isValid){
+				this.shift();
+				data.recurs--;
+			}
+			return isValid;
+		}
+		#remove(lambda){
 			if(lambda.id==undefined)return;
 			this.shift();
 			let data = files.getDataFromID[lambda.id];
-			this.currentMaxRecur = data.maxRecur;
 			if(data.recurs==0)throw Error("compiler error:"
 				+" Possibly, unmatching amounts of add() and remove()."
 				+" data.recurs should not be modified elsewhere"
 			);
-			if(!this.includes(lambda.id))data.maxRecur = Infinity;
 		}
 		stackCheck(maxRecur){//only checks last item
 			//:Number->[bool,Number]
@@ -202,29 +210,28 @@ const TEST = false;
 				return function(arg){return this.call(arg)}.bind(this);
 			}
 		}
-		class Assignment{
-			constructor(labelName,value,parent){//:(String,ContextTree) 'a = 2'
-				Object.assign(this,{labelName,value,parent});
-			}
-		}
 		class RecurSetter extends Array{//'value::recur'
-			constructor(value,recur,context=undefined,id){
-				super(0);
-				Object.assign(this,{
-					value,//:Exp
-					recur,//:Exp
-					context,//:Context?
-					id,//:Number
-				});
+			constructor(...list){
+				super(list.length);
+				Object.assign(this,list);
 			}
+			recur;//:Exp
+			context;//:Context?
+			id;//:Number
 			getRecursLeft(stack){//()-> finite Number
 				return Lazy.toInt(Object.assign(new Lazy(this.recur),{context:this.context,id:this.id}),stack);
 			}
 			call(arg,context,stack){
 				return this.eval(stack).call(arg,context,stack);
 			}
-			eval(stack){
-				return Object.assign(new Lazy(this.value),{context:this.context,id:this.id}).eval(stack);
+			eval(stack=new Stack){;
+				let ans = stack.doOnStack(this,stack=>Object.assign(
+					new Lazy(...this),{
+						context:new Context(this.context,undefined,this.getRecursLeft(stack)),
+						id:this.id,
+					}
+				).eval(stack));
+				return ans;
 			}
 		}
 		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
@@ -241,8 +248,9 @@ const TEST = false;
 			}
 			eval(){return this}
 		}
-		class Dot{//'a.b'
+		class Dot extends Exp{//'a.b'
 			constructor(name){
+				super();
 				this.name=name;//:String
 			}
 			call(arg,context,stack){
@@ -250,8 +258,9 @@ const TEST = false;
 			}
 			eval(){return this}
 		}
-	class Func{//arraw function
+	class Func extends Exp{//arraw function
 		constructor(func,id){
+			super();
 			this.func=func;
 		}
 		//isOperater:bool&Operator?
@@ -264,7 +273,7 @@ const TEST = false;
 		constructor(value){
 			super(value|0);
 		}
-		static Part1 = class extends Exp{
+		static Part1 = class IntPart extends Exp{
 			constructor(value,arg_f){
 				super();
 				this.value = value;//:Number|Int
@@ -279,11 +288,11 @@ const TEST = false;
 			}
 			eval(){return this}
 		};
-		static increment = {
+		static increment = new class Increment extends Exp{
 			//n> f>x>f(n f x)
-			call(arg,context,stack){return new Int((arg|0)+1)??this.lazyExpVersion.call(arg)},
-			eval(stack){return this},
-			lazyExpVersion:new Lambda(new Lambda(new Lambda(1,[2,1,0]))),
+			call(arg,context,stack){return new Int((arg|0)+1)??this.lazyExpVersion.call(arg)};
+			eval(stack){return this};
+			lazyExpVersion=new Lambda(new Lambda(new Lambda(1,[2,1,0])));
 		};
 		call(arg_f){//f>x>
 			return new this.constructor.Part1(this,arg_f);
@@ -316,7 +325,7 @@ const TEST = false;
 		}
 		eval(){return this}
 		get = Object.assign(new Calc(index=>this[index|0]),{id:List.get.id});
-		concat = Object.assign(new Func((list,context,stack)=>stack.doOnStack(
+		concat = Object.assign(new Func((list,context,stack)=>stack.doOnStack(list,
 			(list=list.eval())instanceof List?Object.assign(new List(...this,...list),{id:this.id}):
 			Object.assign(new List(...this,list),{id:this.id})//'[1 2] 3' => '[1 2] [3]' => '[1 2 3]'
 		)));
@@ -612,7 +621,7 @@ function compile (text,fileName){
 			if(!pattern){//set recur
 				hasOwnContext=false;
 				i=oldI;
-				if(getWord(tree,i)=="::"){
+				if(getWord(tree,i)=="::" && i>0){
 					pattern = "::";
 					type = "recursion";
 					hasOwnContext = true;
@@ -644,21 +653,8 @@ function compile (text,fileName){
 			for(let i=0;i<tree.length;){
 				word = getWord(tree,i);
 				let match = match_pattern(tree,i);
-				while(context.pattern=="::"&&!isFirst){//takes in a single, short expression
-					context=context.parent;
-				}
 				if(match.pattern||(match instanceof Simple)){
 					({i}=match);
-					if(match.pattern == "::"){//get arg match for 'a :: r'
-						//prevent '(:: ... )' or ', :: ...'
-						if(isFirst)file.throwError(match.id,"syntax","Expected argument before recursion operator `::`.\nRecursion takes the form: `argument :: recursion`.\n",a=>Error(a));
-						//prevent '(a:: ...)' or ', a:: ...'
-						let match_arg = context.list.pop();
-						match_arg.parent = match;
-						if(match_arg.isFirst)file.throwError(match.id,"syntax","Expected prefious argument or inisial funciton before recursion pattern `::`.",a=>Error(a));
-						match_arg.isFirst = true;
-						match.list.push(match_arg);
-					}
 					match.parent = context;
 					context.list.push(match);
 					match.isFirst=isFirst;
@@ -881,6 +877,7 @@ function compile (text,fileName){
 					match.value.id = match.id;
 				}
 			}
+			//find and link references
 			for(let [match,i,bracketParent] of forEachPattern()){
 				let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 				if(match.pattern == "="){//assignment
@@ -946,14 +943,13 @@ function compile (text,fileName){
 					match.parent.value.push(match.value);
 				}
 			}
-			//find and link references & remove empty ',' blocks
+			//find recursion patterns 'r ::'
 			for(let [match,i,bracketParent] of forEachPattern()){
 				if(match.pattern=="::"){
-					if(match.list?.length<2)throw Error("compiler error: should have been delt with in function 'getPatterns()'. Try looking in there for bugs.");
-					match.value.value = match.value[0];
-					match.value.recur = match.value[1];
-					match.value.pop();
-					match.value.pop();
+					let index = match.parent.value.indexOf(match.value);
+					if(index>0)match.value.recur = match.parent.value.splice(index-1,1)[0];
+					else throw Error("compiler error");
+					match.parent.value.splice(index+1,0,...match.value.splice(1,match.value.length-1));
 				}
 			}
 			//remove empty commas caused by assignments e.g. '(a=1,b=2,a)' -> '(a=1,(b=2),(a))' -> '(()(a))' -> '(a)'
@@ -975,7 +971,7 @@ function compile (text,fileName){
 					yield [context.value,0];
 					yield*forEachTree(context.value,
 						v=>
-						v instanceof RecurSetter?[[v.value],[v.recur]]:
+						v instanceof RecurSetter?[[v.recur],...v]:
 						v instanceof Reference?v.value:
 						v instanceof Array?v:
 						[]
@@ -1035,28 +1031,30 @@ function compile (text,fileName){
 		Object.assign(file,{tree,context,expression})
 		return file;//parse(tree);
 	}
-	return tryCatch(main,file);//new Lazy(Lambda.null));
+	return main();
 }
-function tryCatch (foo,exceptionValue){
+function tryCatch (foo,throwError,exceptionValue){
+	throwError??=console.log;
 	if(TEST){
 		return foo();
 	}
 	else try{//main
 		return foo();
 	}catch(error){
-		console.log(error);
+		throwError(error);
 		return exceptionValue;
 	}
 }
 tryCatch(()=>{//λ
 	let s = new Stack;
 	loga(compile(`
-		l>(
+		_=(
 			i = n>n(++)0,
-			Y = f>r (x>f(x x))::10 r=a>a a,
-			factorial = Y !>x> x == 0 1 (x * (!,--x::x)::x),
+			Y = 10::f>r (x>f(x x)) r=a>a a,
+			factorial = (Y !>x> x == 0 1 (x * (!,--x))),
 			factorial 4,
-		)
-	`).call(new Func(v=>[loga(v.eval()),v][1])).eval()
+		),
+		10::((a>a a)(a>a a))
+	`).value.eval()//.call(new Func(v=>[loga(v.eval()),v][1]))
 	);
 });
