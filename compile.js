@@ -20,7 +20,7 @@ const TEST = false;
 	}
 	class Exp_Array extends Array{}
 	class Exp_Number extends Number{}
-	for(let i of ["call","eval","evalFully","toJS"]){
+	for(let i of ["call", "eval", "evalFully", "toJS"]){
 		Exp_Array.prototype[i]=
 		Exp_Number.prototype[i]=
 		Exp.prototype[i]
@@ -67,6 +67,7 @@ const TEST = false;
 				v instanceof NameSpace?v:
 				v instanceof List?v:
 				v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{...v,context,id:v.id}):
+				v instanceof Reference?Object.assign(new Lazy(v.value),{id:v.id,context:context.getContext(v.levelDif)}):
 				v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id}):
 				typeof v.call == "function"?v:
 				v instanceof Object?(v=>{
@@ -77,14 +78,16 @@ const TEST = false;
 					return new NameSpace(labels);
 				})(v):
 				v//uncallable object
-			).reduce((s,v)=>
-				stack.doOnStack(v,stack=>s.call(v,context,stack))
+			).reduce((s,v)=>[v==undefined?loga(this):0,
+				stack.doOnStack(v,stack=>s.call(v,context,stack))][1]
 			);
+			//optimise for next time.
+			if(this.length>1)this.splice(0,this.length,ans);
 			return ans;
 		}
 		evalFully(stack=new Stack()){
 			let ans = this;
-			while(ans instanceof Lazy || ans instanceof RecurSetter)
+			while((!(ans.length==1 && ans[0] instanceof Lambda)&& ans instanceof Lazy) || ans instanceof RecurSetter)
 				ans = ans.eval(stack);
 			return ans;
 		}
@@ -211,9 +214,8 @@ const TEST = false;
 				Object.assign(this,exps);
 			}
 			id;//:number
-			static null = new class Null{
+			static null = new class Null extends Exp{
 				call(arg){return arg}
-				eval(){return this}
 			};
 			findHighestContext(){
 				return this.highestContext?this.highestContext:
@@ -229,10 +231,11 @@ const TEST = false;
 				super(list.length);
 				Object.assign(this,list);
 			}
-			recur;//:Exp
+			recur;//:Lazy
 			context;//:Context?
 			id;//:Number
 			getRecursLeft(stack){//()-> finite Number
+				if(this.recur.length==1 && this.recur[0] == RecurSetter.forever)return Infinity;
 				let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur,context:this.context}),stack));
 				return ans;
 			}
@@ -243,6 +246,7 @@ const TEST = false;
 					}
 				).eval(stack);
 			}
+			static forever = new Lambda(new Lambda(0));
 		}
 		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
 			constructor(labels,lazy){//labels:json-like object
@@ -459,6 +463,8 @@ let files_startId;
 		[Int.increment,"increment"],
 		[List.get,"List.get"],
 		[List.get_expression,"(list)> bool>bool head tail {head tail} = list,"]
+		[RecurSetter.forever],
+		[RecurSetter.forever[0]],
 	].forEach(v=>files.addInbuilt(v));
 	files_startId = files.getDataFromID.length;
 }
@@ -788,7 +794,9 @@ function compile (text,fileName){
 				higherParamParent
 				&& -1 == (argParentIndex = match_parents.indexOf(higherParamParent.parent))
 			){higherParamParent = higherParamParent?.parent};
-			if(argParentIndex==-1)throw Error("compiler error");
+			if(argParentIndex==-1){
+				throw Error("compiler error");
+			}
 			if(!higherParamParent)throw Error("compiler error");
 			let higherArgParent = match_parents[argParentIndex-1];
 			if(argParentIndex==0){//e.g. '(a a=2)'
@@ -829,7 +837,8 @@ function compile (text,fileName){
 		}
 		class Operator extends Param{
 			constructor(name,priority,foo,length=2){
-				super({name:[name,-1],priority,owner:context,value:foo});
+				//assume this.name[1] is not used
+				super({name:[name,undefined],priority,owner:context,value:foo});
 				this.value.operatorParamObj = this;//:truthy
 				this.length = length;
 			}
@@ -885,6 +894,8 @@ function compile (text,fileName){
 			].map(v=>[
 				[files.addInbuilt(v[2],v[0]),v[2].name=v[0],v=new Operator(...v)][2].name[0],v
 			]));
+			let name = "Infinity";
+			context.startLabels.set(name,new Param({name:[name,undefined],owner:new BracketPattern({parent:context}),value:RecurSetter.forever}));
 			maxPriority= i;
 		}
 		function parseNumber(word){
@@ -1028,25 +1039,20 @@ function compile (text,fileName){
 						while(match.parent.value.includes(match.value)){
 							match.parent.value.splice(index,1);
 						}
-					if(match.value.length == 1 || index == 0){
+					else if(match.value.length == 1 || index == 0){
 						match.parent.value.splice(index,1,...match.value);
 					}
 				}
 			}
 			//handle operator priorities
-			for(let [value,i] of 
+			for(let [match,i] of 
 				function*(){
-					yield [context.value,0];
-					yield*forEachTree(context.value,
-						v=>
-						v instanceof RecurSetter?[[v.recur],...v]:
-						v instanceof Reference?v.value:
-						v instanceof Array?v:
-						[]
-					);
+					yield [context,0];
+					yield*forEachPattern()
 				}()
 			){
-				if(!(value instanceof Array && value.length>0 && !(value instanceof RecurSetter)))continue;
+				let value = match.value;
+				if(!match.list)continue;
 				let list = value;
 				for(let priority=0;priority<maxPriority+1;priority++){
 					for(let i=0;i<list.length;i++){
@@ -1123,16 +1129,17 @@ function tryCatch (foo,throwError,exceptionValue){
 }
 tryCatch(()=>{//λ
 	let s = new Stack;
-	loga(
-		compile(`
-			log>eval>(
-				i = n>n(++)0,
-				Y = f>r (x>f(x x)) r=a>a a,
-				factorial = Y !>x> x::(x == 0 1 x * (! x::(--x))),
-				factorial 7,
-			)
-		`).call(new ArrowFunc((v,c,stack)=>[loga(v),v][1]))
-		.call(new ArrowFunc((v,c,s)=>v.evalFully(s)))
-		.evalFully()
-	);
+	compile(`
+		log>eval>
+		Infinity::(
+			i = n>n(++)0,
+			Y = f>r (x>f(x x)) r=a>a a,
+			factorial = Y !>x> x::(x == 0 1 x * (! x::(--x))),
+			! = Infinity::(Y !>x> x == 0 1 x * (! --x)),
+			log(eval(factorial 14))
+		)
+	`)
+	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval()),v][1]))
+	.call(new ArrowFunc((v,c,s)=>v.evalFully(s)))
+	.evalFully()
 });
