@@ -9,10 +9,26 @@ const TEST = false;
 		return list.reduce((s,v)=>Math.max(s,typeof v=="number"?v:s.findHighestContext()),-1);
 	}
 	class Exp{
-		call(arg,context,stack){return arg}
-		eval(){return this}
+		call(arg,context,stack){return this.eval(stack).call(arg,context,stack)}
+		eval(stack){return this}
+		evalFully(stack){return new Lazy(this).evalFully(stack)}
+		toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
+		static fromJS(value){
+			if(typeof value == "function")return new Func(value);
+			if(typeof value == "number")return new Int();
+		}
 	}
-	class Lazy extends Array{//:Exp ; lazy evaluation
+	class Exp_Array extends Array{
+		call(arg,context,stack){return this.eval(stack).call(arg,context,stack)}
+		eval(stack){return this}
+		evalFully(stack){return new Lazy(this).evalFully(stack)}
+		toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
+		static fromJS(value){
+			if(typeof value == "function")return new Func(value);
+			if(typeof value == "number")return new Int();
+		}
+	}
+	class Lazy extends Exp_Array{//:Exp ; lazy evaluation
 		//Lazy : Exp[]
 		context;//:Context
 		findHighestContext(){
@@ -30,15 +46,17 @@ const TEST = false;
 			else return this.eval(stack).call(arg,this.context,stack);
 		}//(a>a)(a>a a)
 		isReducable(exp){//returns to if exp.eval() != exp
-			return exp instanceof Lazy || exp instanceof RecurSetter;
+			return exp instanceof Lazy || exp.constructor==Array;
 		}
 		eval(stack=new Stack()){
 			let ans = this;
 			{
-				//[x],Lazy(x) -> x; where x:Lazy|Array
-				while(ans.length != 1?false: ans[0] instanceof Lazy || ans[0].constructor==Array)ans=ans[0];//assume: ans is Tree
+				//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
+				while(ans.length==1 && this.isReducable(ans[0]))ans=ans[0];//assume: ans is Tree
 				//ans:Lazy|Array
-				if(ans.length == 0)return Lambda.null;
+				if(ans.length == 0)
+					if(1)throw Error("compiler error: all null values should be delt with at compile time")
+					else return Lambda.null;
 			}
 			const context = this.context;
 			//note this.map first calls 'new Lazy(this.length)' which is overwriten if there is at least 1 item in the expression.
@@ -51,7 +69,7 @@ const TEST = false;
 				v instanceof Int?v:
 				v instanceof NameSpace?v:
 				v instanceof List?v:
-				v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{recur:v.recur,context,id:v.id}):
+				v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{...v,context,id:v.id}):
 				v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id}):
 				typeof v.call == "function"?v:
 				v instanceof Object?(v=>{
@@ -65,11 +83,12 @@ const TEST = false;
 			).reduce((s,v)=>
 				stack.doOnStack(v,stack=>s.call(v,context,stack))
 			);
-			if(ans instanceof Lazy || ans instanceof RecurSetter){
-				while(ans.length == 1 && ans[0] instanceof Lazy || ans[0].constructor instanceof Array)ans=ans[0];//assume: is Tree
-				//ans:Lazy|Array
-				if(ans.length == 0)ans = Lambda.null;
-			}
+			return ans;
+		}
+		evalFully(stack=new Stack()){
+			let ans = this;
+			while(ans instanceof Lazy || ans instanceof RecurSetter)
+				ans = ans.eval(stack);
 			return ans;
 		}
 		toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
@@ -79,7 +98,7 @@ const TEST = false;
 			if(foo instanceof Int)return foo;
 			const inc = Int.increment;
 			const zero = new Int(0);
-			return foo.call(inc,undefined,stack).call(zero,undefined,stack);
+			return foo.call(inc,undefined,stack).call(zero,undefined,stack).eval();
 		}
 	}
 	class Context{
@@ -119,21 +138,23 @@ const TEST = false;
 		doOnStack(arg,foo){
 			let stackableObject = arg;//expression that will be added onto the stack.
 			const data = files.getDataFromID[stackableObject.id];
-			let oldData = {maxRecur:data?.maxRecur,recurs:data?.recurs};
-			if(!this.#add(stackableObject,arg)){
+			let oldMaxRecur = data?.maxRecur;
+			let recurs = {value:0};//
+			if(!this.#add(stackableObject,arg,recurs)){//recurs:mut
+				recurs = recurs.value;
 				//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
 				//recursion detected
 				if(1){
 					let file = files.getDataFromID[stackableObject.id].file;
-					file.throwError(stackableObject.id,"recursion","unbounded recursion detected",a=>Error(a),this);
+					file.throwError(stackableObject.id,"recursion", "unbounded recursion detected. Recursion level: "+recurs+"",a=>Error(a),this);
 				}else return Lambda.null;
 			}else {}
 			let ans = foo(this);
 			this.#remove(stackableObject);
-			if(data)Object.assign(data,oldData);
+			if(data)data.maxRecur = oldMaxRecur;
 			return ans;
 		}
-		#add(exp,recurSetter=undefined){
+		#add(exp,recurSetter=undefined,recurs_out){
 			let id = exp.id;
 			if(id!=undefined){
 				this.unshift(id);
@@ -143,24 +164,22 @@ const TEST = false;
 			const stack = this;
 			let recursLeft= exp.context?.maxRecur ?? 1;
 			let data = files.getDataFromID[id];
-			let maxRecur = data.recurs+recursLeft;
 			let [isValid,recurs] = this.stackCheck(data.maxRecur);
-			data.recurs = recurs;
-			if(recurs <= 1 || maxRecur<data.maxRecur) data.maxRecur = maxRecur;
+			let newRecursLeft = recursLeft + recurs;
+			let isLen1 = exp instanceof Exp_Array?exp.length == 1:false;
+			//assume length 1 expressions can't recur infinitely since they don't call their parts
+			if(recurs <= 1 || isLen1 || newRecursLeft<data.maxRecur) data.maxRecur = newRecursLeft;
+			if(isLen1)isValid = true;
 			if(!isValid){
 				this.shift();
-				data.recurs--;
 			}
+			recurs_out.value = recurs;
 			return isValid;
 		}
 		#remove(lambda){
 			if(lambda.id==undefined)return;
 			this.shift();
 			let data = files.getDataFromID[lambda.id];
-			if(data.recurs==0)throw Error("compiler error:"
-				+" Possibly, unmatching amounts of add() and remove()."
-				+" data.recurs should not be modified elsewhere"
-			);
 		}
 		stackCheck(maxRecur){//only checks last item
 			//:Number->[bool,Number]
@@ -187,7 +206,7 @@ const TEST = false;
 		}
 	}
 	//code:
-		class Lambda extends Array{//:Exp
+		class Lambda extends Exp_Array{//:Exp
 			constructor(...exps){
 				super(exps.length);
 				Object.assign(this,exps);
@@ -205,12 +224,8 @@ const TEST = false;
 				context = new Context(context,arg);
 				return Object.assign(new Lazy(...this),{context,id:this.id}).eval(stack);
 			}
-			eval(){return this}
-			toJS(){
-				return function(arg){return this.call(arg)}.bind(this);
-			}
 		}
-		class RecurSetter extends Array{//'value::recur'
+		class RecurSetter extends Exp_Array{//'value::recur'
 			constructor(...list){
 				super(list.length);
 				Object.assign(this,list);
@@ -219,19 +234,15 @@ const TEST = false;
 			context;//:Context?
 			id;//:Number
 			getRecursLeft(stack){//()-> finite Number
-				return Lazy.toInt(Object.assign(new Lazy(this.recur),{context:this.context,id:this.id}),stack);
+				let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur,context:this.context}),stack));
+				return ans;
 			}
-			call(arg,context,stack){
-				return this.eval(stack).call(arg,context,stack);
-			}
-			eval(stack=new Stack){;
-				let ans = stack.doOnStack(this,stack=>Object.assign(
-					new Lazy(...this),{
+			eval(stack=new Stack){
+				return Object.assign(new Lazy(...this),{
 						context:new Context(this.context,undefined,this.getRecursLeft(stack)),
 						id:this.id,
 					}
-				).eval(stack));
-				return ans;
+				).eval(stack);
 			}
 		}
 		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
@@ -246,7 +257,6 @@ const TEST = false;
 				if(arg instanceof NameSpace)return new NameSpace({...this.labels,...arg.labels},arg.lazy);
 				else return arg.call(this);
 			}
-			eval(){return this}
 		}
 		class Dot extends Exp{//'a.b'
 			constructor(name){
@@ -256,9 +266,8 @@ const TEST = false;
 			call(arg,context,stack){
 				if(arg instanceof NameSpace)return arg.labels
 			}
-			eval(){return this}
 		}
-	class Func extends Exp{//arraw function
+	class ArrowFunc extends Exp{//arraw function
 		constructor(func,id){
 			super();
 			this.func=func;
@@ -267,11 +276,34 @@ const TEST = false;
 		call(arg,context,stack){//Int->Int-> ... Int-> Int
 			return this.func(arg,context,stack);
 		}
-		eval(stack){return this}
 	}
-	class Int extends Number{
+	class MultiArgLambdaFunc extends Exp{//arraw function
+		constructor(func,args=[],stack=undefined){
+			super()
+			this.func = func;//:(...Number[])->Number
+			this.args = args;//:Lazy[]
+			if(args.length>=func.length){
+				const ans = this.func(...args.map(v=>Lazy.toInt(v,stack)));
+				const nullValue = Lambda.null;
+				return typeof ans == "number"?isNaN(ans)?nullValue:new Int(ans):ans??nullValue;//can return custom Exp objects.
+			}
+		}
+		//isOperater:bool&Operator?
+		call(arg,context,stack){//Int->Int-> ... Int-> Int
+			if(args.length>=func.length-1){
+				return this.func([...this.args,arg],context,stack);
+			}
+			else return new this.constructor(this.func,[...this.args,arg])
+		}
+	}
+	class Func extends MultiArgLambdaFunc{
+		constructor(func,args=[],stack=undefined){
+			return new MultiArgLambdaFunc((args)=>func(...args));
+		}
+	}
+	class Float extends Number{
 		constructor(value){
-			super(value|0);
+			super(value);
 		}
 		static Part1 = class IntPart extends Exp{
 			constructor(value,arg_f){
@@ -290,7 +322,7 @@ const TEST = false;
 		};
 		static increment = new class Increment extends Exp{
 			//n> f>x>f(n f x)
-			call(arg,context,stack){return new Int((arg|0)+1)??this.lazyExpVersion.call(arg)};
+			call(arg,context,stack){return new Int(arg+1)??this.lazyExpVersion.call(arg)};
 			eval(stack){return this};
 			lazyExpVersion=new Lambda(new Lambda(new Lambda(1,[2,1,0])));
 		};
@@ -299,12 +331,17 @@ const TEST = false;
 		}
 		eval(){return this}
 	}
-	class Calc extends Func{//calculation
+	class Int extends Float{
+		constructor(value){
+			super(value|0);
+		}
+	}
+	class Calc extends ArrowFunc{//calculation
 		constructor(func,args=[],stack=undefined){
 			super(func)//func:(...Number[])->Number
 			this.args = args;//:Lazy[]
 			if(args.length>=func.length){
-				const ans = this.func(...args.map(v=>Lazy.toInt(v,stack)));
+				const ans = this.func(...args.map(v=>+Lazy.toInt(v,stack)));
 				const nullValue = Lambda.null;
 				return typeof ans == "number"?isNaN(ans)?nullValue:new Int(ans):ans??nullValue;//can return custom Exp objects.
 			}
@@ -315,7 +352,7 @@ const TEST = false;
 		}
 		eval(stack){return this}
 	}
-	class List extends Array{
+	class List extends Exp_Array{
 		constructor(...list){
 			super(list.length);
 			Object.assign(this,list);
@@ -325,7 +362,7 @@ const TEST = false;
 		}
 		eval(){return this}
 		get = Object.assign(new Calc(index=>this[index|0]),{id:List.get.id});
-		concat = Object.assign(new Func((list,context,stack)=>stack.doOnStack(list,
+		concat = Object.assign(new ArrowFunc((list,context,stack)=>stack.doOnStack(list,
 			(list=list.eval())instanceof List?Object.assign(new List(...this,...list),{id:this.id}):
 			Object.assign(new List(...this,list),{id:this.id})//'[1 2] 3' => '[1 2] [3]' => '[1 2 3]'
 		)));
@@ -357,7 +394,7 @@ const TEST = false;
 	let recur = new Lambda();
 //----
 function loga(...logs){console.log(...logs)}
-const files={
+var files={
 	getDataFromID:[],//Map(id => Data{line,column,file,word})
 	list:new Map([]),//Map(fileName => FileData)
 	FileData:class FileData extends Exp{//data for errors
@@ -400,6 +437,7 @@ const files={
 		}
 		call(arg,context = new Context,stack = new Stack){return this.value.call(arg,context,stack)??Lambda.null}
 		eval(stack = new Stack){return this.value.eval(stack)??Lambda.null}
+		evalFully(stack = new Stack){return this.value.evalFully(stack)}
 	},
 	addInbuilt(obj,name="SOURCE"){
 		let word = "SOURCE:[ "+name+" ]";
@@ -408,23 +446,28 @@ const files={
 			file:new this.FileData({expression:obj,lines:[word]}),
 		})-1;
 		return obj;
-	}
+	},
+	reset(){
+		this.getDataFromID.splice(files_startId,this.getDataFromID.length-files_startId);
+	},
 };
+let files_startId;
 {
 	[
 		[Int.prototype,"Int"],
 		[Calc.prototype,"Calc"],
-		[Func.prototype,"Function"],
+		[ArrowFunc.prototype,"Function"],
 		[Int.increment,"increment"],
 		[List.get,"List.get"],
 		[List.get_expression,"(list)> bool>bool head tail {head tail} = list,"]
-	].forEach(v=>files.addInbuilt(v))
+	].forEach(v=>files.addInbuilt(v));
+	files_startId = files.getDataFromID.length;
 }
 function compile (text,fileName){
-	if(typeof text != "string")throw throwError_noLine("basic API","'compile' requires a string input as the source code.",a=>Error(a));
+	if(typeof text != "string")throw throwError_noLine("basic API", "'compile' requires a string input as the source code.",a=>Error(a));
 	//types
 		//syntax, reference
-	fileName??=(()=>{
+	if(fileName=== undefined)fileName=(()=>{
 		for(let [fileName,value] of files.list.entries())
 			if(value.text == text)return fileName;
 		return undefined;
@@ -533,14 +576,14 @@ function compile (text,fileName){
 					return new Pattern({...getObj()})
 				}
 				else if(word.match(numberRegex)){
-					pattern = word;
+					pattern = "";
 					i++;
 					let match = new Simple({...getObj(),arg:word});
 					match.type="number";
 					return match;
 				}
 				else if(word.match(/^\w+$/)){
-					pattern = word;
+					pattern = "";
 					i++;
 					let match = new Simple({...getObj(),arg:word});
 					return match;
@@ -621,6 +664,7 @@ function compile (text,fileName){
 			if(!pattern){//set recur
 				hasOwnContext=false;
 				i=oldI;
+				options="";
 				if(getWord(tree,i)=="::" && i>0){
 					pattern = "::";
 					type = "recursion";
@@ -653,8 +697,32 @@ function compile (text,fileName){
 			for(let i=0;i<tree.length;){
 				word = getWord(tree,i);
 				let match = match_pattern(tree,i);
+				if(!isFirst)while(context.pattern=="::"){//takes in a single, short expression
+					context=context.parent;
+				}
 				if(match.pattern||(match instanceof Simple)){
 					({i}=match);
+					if(match.pattern == "::"){//get arg match for 'r :: a'
+
+						//prevent '(:: ... )' or ', :: ...'
+						if(isFirst){//if no 'r' argument '(::)' is parsed as a label
+							const simple = new Simple ({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
+							//file.throwError(match.id,"syntax", "Expected argument before recursion operator `::`.\nRecursion takes the form: `argument :: recursion`.\n",a=>Error(a));
+							match = simple;
+							{
+								yield match;
+								context.list.push(match);
+								++i;
+								isFirst = false;
+								continue;
+							}
+						}
+						let match_arg = context.list.pop();
+						if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
+						match_arg.parent = match;
+						match_arg.isFirst = true;
+						match.list.push(match_arg);
+					}
 					match.parent = context;
 					context.list.push(match);
 					match.isFirst=isFirst;
@@ -669,7 +737,7 @@ function compile (text,fileName){
 				else if("([{".includes(word)){
 					let id = tree[i][1];
 					++i;
-					let bracket=new BracketPattern({pattern:{"(":"()","[":"[]","{":"{}"}[word],list:[],parent:context,isFirst,id});
+					let bracket=new BracketPattern({pattern:{"(":"()", "[":"[]", "{":"{}"}[word],list:[],parent:context,isFirst,id});
 					yield bracket;
 					context.list.push(bracket);
 					yield*getPatterns(tree[i],bracket);
@@ -686,6 +754,8 @@ function compile (text,fileName){
 					yield context;
 					bracketContext.list.push(context);
 					isFirst=true;
+					i++;
+					continue;
 				}
 				else {
 					let match = new Simple({id:tree[i][1],arg:word,type:"symbol",parent:context,isFirst})
@@ -729,7 +799,7 @@ function compile (text,fileName){
 			if(!higherArgParent)throw Error("compiler error");
 			if(higherParamParent.parent!=higherArgParent.parent)throw Error("compiler error");
 			{//check for and prevent reference loops
-				if(higherParamParent.refs?.has?.(higherArgParent))file.throwError(match.id,"illegal reference","recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
+				if(higherParamParent.refs?.has?.(higherArgParent))file.throwError(match.id,"illegal reference", "recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
 			}
 			//note:
 				//From now on only things from block 'arg' can reference block 'param'
@@ -742,7 +812,7 @@ function compile (text,fileName){
 				higherArgParent.refLevel??=(higherParamParent.refLevel??-1)+1;
 				higherParamParent.refLevel??=higherArgParent.refLevel-1;
 			}
-			if(higherArgParent.refLevel<=higherParamParent.refLevel)file.throwError(match.id,"illegal reference","complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
+			if(higherArgParent.refLevel<=higherParamParent.refLevel)file.throwError(match.id,"illegal reference", "complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
 			higherArgParent.refs.add(higherParamParent);
 		}
 		function getParam(name,parent,parents=[]){//parents:Pattern[]?
@@ -792,7 +862,7 @@ function compile (text,fileName){
 			;
 			context.startLabels= new Map([
 				//TODO: allow '!!a' -> '(! (! a))'
-				["!" ,  i,new Func((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
+				["!" ,  i,new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
 				["~" ,  i,new Calc((a)=>~a),1],
 				["++",  i,new Calc((a)=>a+1),1],
 				["--",  i,new Calc((a)=>a-1),1],
@@ -805,7 +875,7 @@ function compile (text,fileName){
 				["/" ,  i,new Calc((a,b)=>a/b),2],
 				["+" ,++i,new Calc((a,b)=>a+b),2],
 				["-" ,  i,new Calc((a,b)=>a-b),2],
-				["==",++i,new Func(a=>new Func(b=>equality(a,b))),2],
+				["==",++i,new ArrowFunc(a=>new ArrowFunc(b=>equality(a,b))),2],
 				["<" ,  i,new Calc((a,b)=>a<b?bool_true:bool_false)],
 				[">" ,  i,new Calc((a,b)=>a>b?bool_true:bool_false)],
 				[">=",  i,new Calc((a,b)=>a>=b?bool_true:bool_false)],
@@ -827,6 +897,7 @@ function compile (text,fileName){
 			//find definisions
 			for(let [match,i,bracketParent] of forEachPattern()){
 				match.funcLevel = match.parent?.funcLevel || 0;
+				if(match.parent.pattern == "::" && i==0)match.funcLevel--; //'r' does use the inner '::' context
 				let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 				if(match.pattern == "="){//assignment
 				if(bracketParent.pattern==","){
@@ -853,6 +924,7 @@ function compile (text,fileName){
 				}
 				else if(match.type == "recursion"){
 					match.value = new RecurSetter();
+					match.funcLevel++;
 				}
 				else if(match.type == "function"){//assume pre-fix
 					if(match.pattern==">")match.startLabels = new Map(match.params.map(v=>[v.name[0],v]));
@@ -894,7 +966,7 @@ function compile (text,fileName){
 						if(typeof match.value == "number"){//lambda parameter
 							//validate value
 							if(match.value>match.funcLevel){
-								file.throwError(match.id,"reference","the parameter number exceeds the amount of global scopes",a=>Error(a));
+								file.throwError(match.id,"reference", "the parameter number exceeds the amount of global scopes",a=>Error(a));
 							}
 						}
 					}
@@ -903,7 +975,7 @@ function compile (text,fileName){
 						if(match.type!="number"){
 							//note: number literals & other predefined values can be used as either an Int or a parameter reference
 							if(!param){
-								file.throwError(match.id,"reference","label: '"+match.arg+"' is undefined",a=>Error(a));
+								file.throwError(match.id,"reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
 							}
 							addRefParam(match,parents,param);
 							//assert: param != undefined
@@ -943,13 +1015,10 @@ function compile (text,fileName){
 					match.parent.value.push(match.value);
 				}
 			}
-			//find recursion patterns 'r ::'
+			//find recursion patterns 'r :: a'
 			for(let [match,i,bracketParent] of forEachPattern()){
 				if(match.pattern=="::"){
-					let index = match.parent.value.indexOf(match.value);
-					if(index>0)match.value.recur = match.parent.value.splice(index-1,1)[0];
-					else throw Error("compiler error");
-					match.parent.value.splice(index+1,0,...match.value.splice(1,match.value.length-1));
+					match.value.recur = Object.assign(new Lazy(match.value.shift()),{id:match.list[0].id});
 				}
 			}
 			//remove empty commas caused by assignments e.g. '(a=1,b=2,a)' -> '(a=1,(b=2),(a))' -> '(()(a))' -> '(a)'
@@ -958,7 +1027,7 @@ function compile (text,fileName){
 					let index = match.parent.value.indexOf(match.value);
 					if(match.value.length == 0 && bracketParent[i+1]?.pattern != ",")//if(match.list.length>0 && match.value.length==0)
 						while(match.parent.value.includes(match.value)){
-							match.parent.value.splice(match.parent.value.indexOf(match.value),1);
+							match.parent.value.splice(index,1);
 						}
 					if(match.value.length == 1 || index == 0){
 						match.parent.value.splice(index,1,...match.value);
@@ -978,7 +1047,7 @@ function compile (text,fileName){
 					);
 				}()
 			){
-				if(!(value instanceof Array && value.length>0))continue;
+				if(!(value instanceof Array && value.length>0 && !(value instanceof RecurSetter)))continue;
 				let list = value;
 				for(let priority=0;priority<maxPriority+1;priority++){
 					for(let i=0;i<list.length;i++){
@@ -1003,6 +1072,14 @@ function compile (text,fileName){
 					}
 				}
 			}
+			//parse null values and simplify expressions: '()' -> `Lambda.null`
+			for(let [match,i,bracketParent] of forEachPattern()){
+				if(Lazy.prototype.isReducable(match.value)&& match.value.length==0){
+					let index = match.parent.value.indexOf(match.value);
+					if(index!=-1)//may of already been removed ealier
+					match.parent.value.splice(index,1,Lambda.null);
+				}
+			}
 		}());
 		return context;
 	}
@@ -1023,7 +1100,7 @@ function compile (text,fileName){
 		}
 		else s.column+=v.length;
 		return s;
-	},{line:1,column:1,file,word:"",recurs:0,maxRecur:Infinity});
+	},{line:1,column:1,file,word:"",maxRecur:Infinity});
 	let main=()=>{
 		const tree = treeParse(words);
 		const context = parseContexts(tree);
@@ -1047,14 +1124,16 @@ function tryCatch (foo,throwError,exceptionValue){
 }
 tryCatch(()=>{//λ
 	let s = new Stack;
-	loga(compile(`
-		_=(
-			i = n>n(++)0,
-			Y = 10::f>r (x>f(x x)) r=a>a a,
-			factorial = (Y !>x> x == 0 1 (x * (!,--x))),
-			factorial 4,
-		),
-		10::((a>a a)(a>a a))
-	`).value.eval()//.call(new Func(v=>[loga(v.eval()),v][1]))
+	loga(
+		compile(`
+			log>eval>(
+				i = n>n(++)0,
+				Y = f>r (x>f(x x)) r=a>a a,
+				factorial = Y !>x> (x+1)::(x == 0 1 (x * (! --x))),
+				factorial 4,
+			)
+		`).call(new ArrowFunc((v,c,stack)=>[loga(v),v][1]))
+		.call(new ArrowFunc((v,c,s)=>v.evalFully(s)))
+		.evalFully()
 	);
 });
