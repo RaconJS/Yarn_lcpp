@@ -1069,7 +1069,9 @@ function compile (text,fileName){
 							let newOperation = Object.assign([operator],{id:operator.id});
 							let splice=list.splice(i-useLeftArg,paramLen+1);
 							newOperation.push(...(paramLen==2?[splice[0],splice[2]]:[splice[1]]));
-							list.splice(i-useLeftArg,0,newOperation);
+							let newIndex = i-useLeftArg;
+							if(newIndex==0)list.unshift(...newOperation);//prevent: '(1 + 2)' -> '((+ 1 2))'
+							else list.splice(newIndex,0,newOperation);
 							i-=useLeftArg;
 							//'a + b' -> '(+ a b)'
 							//'! a' -> '(! a)'
@@ -1134,9 +1136,9 @@ tryCatch(()=>{//λ
 		Infinity::(
 			i = n>n(++)0,
 			Y = f>r (x>f(x x)) r=a>a a,
-			factorial = Y !>x> x::(x == 0 1 x * (! x::(--x))),
+			factorial = Y !>x> x::(x == 0 1 x * (!,0+x::(--x))),
 			! = Infinity::(Y !>x> x == 0 1 x * (! --x)),
-			log(eval(factorial 14))
+			log(eval(factorial 10))//max 538
 		)
 	`)
 	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval()),v][1]))
