@@ -10,23 +10,20 @@ const TEST = false;
 	}
 	class Exp{
 		call(arg,context,stack){return this.eval(stack).call(arg,context,stack)}
-		eval(stack){return this}
-		evalFully(stack){return new Lazy(this).evalFully(stack)}
+		eval(stack){return this}//lazy evaluatuation
+		evalFully(stack){return new Lazy(this).evalFully(stack)}//non-lazy evaluation
 		toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
 		static fromJS(value){
 			if(typeof value == "function")return new Func(value);
 			if(typeof value == "number")return new Int();
 		}
 	}
-	class Exp_Array extends Array{
-		call(arg,context,stack){return this.eval(stack).call(arg,context,stack)}
-		eval(stack){return this}
-		evalFully(stack){return new Lazy(this).evalFully(stack)}
-		toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
-		static fromJS(value){
-			if(typeof value == "function")return new Func(value);
-			if(typeof value == "number")return new Int();
-		}
+	class Exp_Array extends Array{}
+	class Exp_Number extends Number{}
+	for(let i of ["call","eval","evalFully","toJS"]){
+		Exp_Array.prototype[i]=
+		Exp_Number.prototype[i]=
+		Exp.prototype[i]
 	}
 	class Lazy extends Exp_Array{//:Exp ; lazy evaluation
 		//Lazy : Exp[]
@@ -95,10 +92,12 @@ const TEST = false;
 			return this.constructor.toInt(foo,stack);
 		}
 		static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
+			foo = foo.evalFully(stack);
 			if(foo instanceof Int)return foo;
 			const inc = Int.increment;
 			const zero = new Int(0);
-			return foo.call(inc,undefined,stack).call(zero,undefined,stack).eval();
+			let ans = foo.call(inc,undefined,stack).call(zero,undefined,stack);
+			return ans?.eval?.(stack)??ans;
 		}
 	}
 	class Context{
@@ -301,7 +300,7 @@ const TEST = false;
 			return new MultiArgLambdaFunc((args)=>func(...args));
 		}
 	}
-	class Float extends Number{
+	class Float extends Exp_Number{
 		constructor(value){
 			super(value);
 		}
@@ -1129,8 +1128,8 @@ tryCatch(()=>{//λ
 			log>eval>(
 				i = n>n(++)0,
 				Y = f>r (x>f(x x)) r=a>a a,
-				factorial = Y !>x> (x+1)::(x == 0 1 (x * (! --x))),
-				factorial 4,
+				factorial = Y !>x> x::(x == 0 1 x * (! x::(--x))),
+				factorial 7,
 			)
 		`).call(new ArrowFunc((v,c,stack)=>[loga(v),v][1]))
 		.call(new ArrowFunc((v,c,s)=>v.evalFully(s)))
