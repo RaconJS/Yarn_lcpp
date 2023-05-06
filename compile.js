@@ -19,6 +19,9 @@ const TEST = false;
 			if(typeof value == "number")return new Int();
 		}
 	}
+	function ID({index,data}){//data:WordData
+		return {index,data};
+	}
 	class Exp_Array extends Array{}
 	class Exp_Number extends Number{}
 	class Exp_String extends String{}
@@ -517,7 +520,7 @@ function compile (text,fileName){
 		let stack = [];
 		for(let i=0;i<words.length;i++){
 			let word = words[i];
-			let value = [word,fileID+i,file];//:[String,id:Number,FileData]
+			let value = [word,new ID({index:i,file})];//:[String,id:Number]
 			if(word.match(/^\//))list.push(value);
 			else if(word.match(/[(\[{]/)){
 				stack.push(list);
@@ -1118,12 +1121,13 @@ function compile (text,fileName){
 	let lines = text.split("\n");
 	const fileID = files.getDataFromID.length;
 	const words = text.match(regex)??[];
-	const file = new files.FileData({text,words,lines,id:fileID});
+	const file = new files.FileData({text,words,data:[],lines,id:fileID});
 	files.list.set(fileName,file);
+	const wordsData = [];
 	words.reduce((s,v,i)=>{
 		s.word = v;
 		let id = files.getDataFromID.length;
-		files.getDataFromID.push(s);
+		wordsData.push(s);
 		s = {...s};
 		if(v.match("\n")){
 			s.line += (v.match(/\n/g)?.length??0);
@@ -1133,7 +1137,7 @@ function compile (text,fileName){
 		return s;
 	},{line:1,column:1,file,word:"",maxRecur:Infinity});
 	let main=()=>{
-		const tree = treeParse(words);
+		const tree = treeParse(wordsData);
 		const context = parseContexts(tree);
 		const expression = context.value;
 		Object.assign(file,{tree,context,expression})
