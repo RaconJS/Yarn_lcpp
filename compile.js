@@ -19,8 +19,40 @@ const TEST = false;
 			if(typeof value == "number")return new Int();
 		}
 	}
-	function ID({index,data}){//data:WordData
-		return {index,data};
+	function ID({data}){//data:WordData
+		return data;
+	}
+	class WordData{
+		constructor(data){
+			Object.assign(this,data);
+		}
+		//line:1,column:1,lines,file,word:"",maxRecur:Infinity
+		throwError(type,errorMessage,error,stack){//error = str=>Error(str)
+			//note: lines and colums are counted from 1
+			if(!TEST)error=a=>a;
+			throw error(
+				"lc++ ERROR:\n"
+				//"l:"+data.line+" c:"+data.column+"\n"
+				// " ".repeat(lineLen)+" |\n"
+				+this.displayWordInLine(type+" error")+"\n"
+				+"error"+": "+errorMessage+"\n"
+				+(!stack?"":
+					"stack:\n"
+					+stack.map(id=>id.displayWordInLine("at")).join("\n")
+				)
+			);
+		}
+		displayWordInLine(msg){
+			let line = this.lines[this.line];
+			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
+			let whiteLen = whiteSpace.length;
+			line = line.substr(whiteLen)//[whiteSpace,line]
+			let lineLen = (""+this.line).length;
+			return ""
+				+this.line+" |" +line+"\n"
+				+" ".repeat(lineLen)+" |" +" ".repeat(this.column-1-whiteLen)+"^".repeat(this.word.length)+" "+msg
+			;
+		}
 	}
 	class Exp_Array extends Array{}
 	class Exp_Number extends Number{}
@@ -426,7 +458,7 @@ const TEST = false;
 //----
 function loga(...logs){console.log(...logs)}
 var files={
-	getDataFromID:[],//Map(id => Data{line,column,file,word})
+	getDataFromID:[],//Map(id => WordData{line,column,file,word})
 	list:new Map([]),//Map(fileName => FileData)
 	FileData:class FileData extends Exp{//data for errors
 		constructor(data){super();Object.assign(this,data);}
@@ -439,33 +471,6 @@ var files={
 		context;//:BracketPattern
 		expression;//:Lazy
 		get value(){return this.expression}//:Exp
-		throwError(id,type,errorMessage,error,stack){//error = str=>Error(str)
-			//note: lines and colums are counted from 1
-			if(!TEST)error=a=>a;
-			throw error(
-				"lc++ ERROR:\n"
-				//"l:"+data.line+" c:"+data.column+"\n"
-				// " ".repeat(lineLen)+" |\n"
-				+this.displayWordInLine(id,type+" error")+"\n"
-				+"error"+": "+errorMessage+"\n"
-				+(!stack?"":
-					"stack:\n"
-					+stack.map(v=>files.getDataFromID[v].file.displayWordInLine(v,"at")).join("\n")
-				)
-			);
-		}
-		displayWordInLine(id,msg){
-			let data = files.getDataFromID[id];
-			let line = this.lines[data.line-1];
-			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
-			let whiteLen = whiteSpace.length;//,data.column-1);
-			line = line.substr(whiteLen)//[whiteSpace,line]
-			let lineLen = (""+data.line).length;
-			return ""
-				+data.line+" |" +line+"\n"
-				+" ".repeat(lineLen)+" |" +" ".repeat(data.column-1-whiteLen)+"^".repeat(data.word.length)+" "+msg
-			;
-		}
 		call(arg,context = new Context,stack = new Stack){return this.value.call(arg,context,stack)??Lambda.null}
 		eval(stack = new Stack){return this.value.eval(stack)??Lambda.null}
 		evalFully(stack = new Stack){return this.value.evalFully(stack)}
@@ -515,12 +520,13 @@ function compile (text,fileName){
 			+errorMessage
 		);
 	}
-	function treeParse(words){
+	function treeParse(wordsData){
 		let list = [];
 		let stack = [];
-		for(let i=0;i<words.length;i++){
-			let word = words[i];
-			let value = [word,new ID({index:i,file})];//:[String,id:Number]
+		for(let i=0;i<wordsData.length;i++){
+			let data = wordsData[i];//:WordData
+			let word = data.word;
+			let value = [word,new ID(data)];//:[String,WordData&ID]
 			if(word.match(/^\//))list.push(value);
 			else if(word.match(/[(\[{]/)){
 				stack.push(list);
@@ -528,7 +534,7 @@ function compile (text,fileName){
 			}
 			else if(word.match(/[)\]}]/)){
 				list = stack.pop();
-				if(!list)file.throwError(i,"syntax", "unballanced brackets: Too many closing brackets", a=>Error(a));
+				if(!list)data.throwError("syntax", "unballanced brackets: Too many closing brackets", a=>Error(a));
 				//assert: list[list.length-2] exists
 				let openBracket = list[list.length-2][0];
 				if(({"(":")", "[":"]", "{":"}"})[openBracket]!=word)file.throwError(i,"syntax", "unmatching brackets:'"+openBracket+"..."+word+"'", a=>Error(a));
@@ -536,7 +542,7 @@ function compile (text,fileName){
 			}
 			else list.push(value);
 		}
-		if(stack.length>0)file.throwError(fileID+words.length-1,"syntax", "unballanced brackets: Too many opening brackets", a=>Error(a));
+		if(stack.length>0)data.throwError("syntax", "unballanced brackets: Too many opening brackets", a=>Error(a));
 		return list;
 	}
 	function parseContexts(tree){
@@ -1126,16 +1132,15 @@ function compile (text,fileName){
 	const wordsData = [];
 	words.reduce((s,v,i)=>{
 		s.word = v;
-		let id = files.getDataFromID.length;
 		wordsData.push(s);
-		s = {...s};
+		s = new WordData(s);
 		if(v.match("\n")){
 			s.line += (v.match(/\n/g)?.length??0);
 			s.column = (v.match(/(?<=\n).+$/)?.[0]?.length??0)+1;//assume: column >= 1
 		}
 		else s.column+=v.length;
 		return s;
-	},{line:1,column:1,file,word:"",maxRecur:Infinity});
+	},new WordData({line:1,column:1,file,word:"",maxRecur:Infinity}));
 	let main=()=>{
 		const tree = treeParse(wordsData);
 		const context = parseContexts(tree);
