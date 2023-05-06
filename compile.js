@@ -2,6 +2,7 @@
 const TEST = false;
 //UNTESTED
 //TODO
+//BODGED
 //classes
 	//Exp: Lambda'λ' | Lazy'()' | Recur'::'
 	//OutExp: Lazy
@@ -11,7 +12,7 @@ const TEST = false;
 	class Exp{
 		call(arg,context,stack){return this.eval(stack).call(arg,context,stack)}
 		eval(stack){return this}//lazy evaluatuation
-		evalFully(stack){return new Lazy(this).evalFully(stack)}//non-lazy evaluation
+		evalFully(stack){return (this instanceof Lazy?this:new Lazy(this)).evalFully(stack)}//non-lazy evaluation
 		toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
 		static fromJS(value){
 			if(typeof value == "function")return new Func(value);
@@ -20,9 +21,11 @@ const TEST = false;
 	}
 	class Exp_Array extends Array{}
 	class Exp_Number extends Number{}
+	class Exp_String extends String{}
 	for(let i of ["call", "eval", "evalFully", "toJS"]){
 		Exp_Array.prototype[i]=
 		Exp_Number.prototype[i]=
+		Exp_String.prototype[i]=
 		Exp.prototype[i]
 	}
 	class Lazy extends Exp_Array{//:Exp ; lazy evaluation
@@ -78,8 +81,8 @@ const TEST = false;
 					return new NameSpace(labels);
 				})(v):
 				v//uncallable object
-			).reduce((s,v)=>[v==undefined?loga(this):0,
-				stack.doOnStack(v,stack=>s.call(v,context,stack))][1]
+			).reduce((s,v)=>
+				stack.doOnStack(v,stack=>s.call(v,context,stack))
 			);
 			//optimise for next time.
 			if(this.length>1)this.splice(0,this.length,ans);
@@ -103,6 +106,64 @@ const TEST = false;
 			return ans?.eval?.(stack)??ans;
 		}
 	}
+	class Lambda extends Exp_Array{//:Exp
+		constructor(...exps){
+			super(exps.length);
+			Object.assign(this,exps);
+		}
+		id;//:number
+		static null = new class Null extends Exp{
+			call(arg){return arg}
+		};
+		findHighestContext(){
+			return this.highestContext?this.highestContext:
+				findHighestContext(this);
+		}
+		call(arg=undefined,context=new Context(),stack){
+			context = new Context(context,arg);
+			return Object.assign(new Lazy(...this),{context,id:this.id}).eval(stack);
+		}
+	}
+	class RecurSetter extends Exp_Array{//'value::recur'
+		constructor(...list){
+			super(list.length);
+			Object.assign(this,list);
+		}
+		recur;//:Lazy
+		context;//:Context?
+		id;//:Number
+		getRecursLeft(stack){//()-> finite Number
+			if(this.recur.length==1 && this.recur[0] == RecurSetter.forever)return Infinity;
+			let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur,context:this.context}),stack));
+			return ans;
+		}
+		eval(stack=new Stack){
+			return Object.assign(new Lazy(...this),{
+					context:new Context(this.context,undefined,this.getRecursLeft(stack)),
+					id:this.id,
+				}
+			).eval(stack);
+		}
+		static forever = new Lambda(new Lambda(0));
+	}
+	class Reference extends Exp{//wrapper for Lazy
+		constructor(value,levelDif,id){
+			super();
+			this.value=value;//:Exp
+			this.levelDif=levelDif;//:Number
+			this.id = id;//:Number
+		}
+		call(arg,context=new Context,stack){
+			//context??= new Context();
+			stack.unshift(this.id);
+			let value = Object.assign(new Lazy,this.value);
+			value.context=context.getContext(this.levelDif);
+			let ans = value.call(arg,context,stack);
+			stack.shift();
+			return ans;
+		}
+		eval(stack){return this.value.eval(stack);}
+	};
 	class Context{
 		static null;//:Context
 		constructor(parent,argument,maxRecur){
@@ -185,124 +246,85 @@ const TEST = false;
 		}
 		stackCheck(maxRecur){//only checks last item
 			//:Number->[bool,Number]
+			if(maxRecur==Infinity||maxRecur>this.length)return [true,0];
 			let recurs=1;
 			let id = this.shift();
 			let lastId=this.indexOf(id);
+			if(this.length-lastId<maxRecur){
+				this.unshift(id);
+				return[true,2];//BODGED
+			}
+			let stackStr = this.join(",")+",";
+			let matchStackStr = this.map(v=>v).splice(0,lastId).join(",")+",";
 			this.unshift(id);
-			if(lastId==-1)return [true,recurs];
-			for(let i=lastId+1;i<this.length;){
-				let isMatch=true;
-				if(this[i]!=id){i++;continue}
-				else i++;
-				if(i+lastId>this.length){return [true,recurs]}
-				if(lastId>0)
-				for(let i1=0;i1<lastId;[i1++,i++]){
-					if(this[i]!=this[i1+1]){isMatch=false;break;}
-				}
-				if(isMatch){
-					recurs++;
-					if(recurs>=maxRecur)return [false,recurs];
-				}
-			}
-			return [true,recurs];
-		}
-	}
-	//code:
-		class Lambda extends Exp_Array{//:Exp
-			constructor(...exps){
-				super(exps.length);
-				Object.assign(this,exps);
-			}
-			id;//:number
-			static null = new class Null extends Exp{
-				call(arg){return arg}
-			};
-			findHighestContext(){
-				return this.highestContext?this.highestContext:
-					findHighestContext(this);
-			}
-			call(arg=undefined,context=new Context(),stack){
-				context = new Context(context,arg);
-				return Object.assign(new Lazy(...this),{context,id:this.id}).eval(stack);
-			}
-		}
-		class RecurSetter extends Exp_Array{//'value::recur'
-			constructor(...list){
-				super(list.length);
-				Object.assign(this,list);
-			}
-			recur;//:Lazy
-			context;//:Context?
-			id;//:Number
-			getRecursLeft(stack){//()-> finite Number
-				if(this.recur.length==1 && this.recur[0] == RecurSetter.forever)return Infinity;
-				let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur,context:this.context}),stack));
-				return ans;
-			}
-			eval(stack=new Stack){
-				return Object.assign(new Lazy(...this),{
-						context:new Context(this.context,undefined,this.getRecursLeft(stack)),
-						id:this.id,
+			recurs = [...stackStr.matchAll(matchStackStr)].length;
+			if(0){
+				if(lastId==-1)return [true,recurs];
+				for(let i=lastId+1;i<this.length;){
+					let isMatch=true;
+					if(this[i]!=id){i++;continue}
+					else i++;
+					if(i+lastId>this.length){return [true,recurs]}
+					if(lastId>0)
+					for(let i1=0;i1<lastId;[i1++,i++]){
+						if(this[i]!=this[i1+1]){isMatch=false;break;}
 					}
-				).eval(stack);
+					if(isMatch){
+						recurs++;
+						if(recurs>=maxRecur)return [false,recurs];
+					}
+				}
+				return [true,recurs];
 			}
-			static forever = new Lambda(new Lambda(0));
+			return [recurs<=maxRecur,recurs];
 		}
-		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
-			constructor(labels,lazy){//labels:json-like object
-				this.labels = new Map(...function*(obj){for(let i in obj)yield [i,obj[i]]}(labels));
-				this.lazy = lazy;
-			}
-			labels;//labels:Map([String],Lazy)
-			lazy;//:lazy ()
-			call(arg,context,stack){
-				if(this.lazy)return this.lazy.call(arg,context,stack);//{a>a a} x -> (a>a a) x
-				if(arg instanceof NameSpace)return new NameSpace({...this.labels,...arg.labels},arg.lazy);
-				else return arg.call(this);
-			}
-		}
-		class Dot extends Exp{//'a.b'
-			constructor(name){
+	}
+	//js functions:
+		class ArrowFunc extends Exp{//arraw function
+			constructor(func,id){
 				super();
-				this.name=name;//:String
+				this.func=func;
 			}
-			call(arg,context,stack){
-				if(arg instanceof NameSpace)return arg.labels
-			}
-		}
-	class ArrowFunc extends Exp{//arraw function
-		constructor(func,id){
-			super();
-			this.func=func;
-		}
-		//isOperater:bool&Operator?
-		call(arg,context,stack){//Int->Int-> ... Int-> Int
-			return this.func(arg,context,stack);
-		}
-	}
-	class MultiArgLambdaFunc extends Exp{//arraw function
-		constructor(func,args=[],stack=undefined){
-			super()
-			this.func = func;//:(...Number[])->Number
-			this.args = args;//:Lazy[]
-			if(args.length>=func.length){
-				const ans = this.func(...args.map(v=>Lazy.toInt(v,stack)));
-				const nullValue = Lambda.null;
-				return typeof ans == "number"?isNaN(ans)?nullValue:new Int(ans):ans??nullValue;//can return custom Exp objects.
+			//isOperater:bool&Operator?
+			call(arg,context,stack){//Int->Int-> ... Int-> Int
+				return this.func(arg,context,stack);
 			}
 		}
-		//isOperater:bool&Operator?
-		call(arg,context,stack){//Int->Int-> ... Int-> Int
-			if(args.length>=func.length-1){
-				return this.func([...this.args,arg],context,stack);
+		class MultiArgLambdaFunc extends Exp{//arraw function
+			constructor(func,len,args=[]){
+				super()
+				this.func = func;//:(...Number[])->Number
+				this.len = len;
+				this.args = args;//:Lazy[]
 			}
-			else return new this.constructor(this.func,[...this.args,arg])
+			//isOperater:bool&Operator?
+			call(arg,context,stack){//Int->Int-> ... Int-> Int
+				if(this.args.length>=this.len-1){
+					return this.func([...this.args,arg],context,stack);
+				}
+				else return new this.constructor(this.func,this.len,[...this.args,arg]);
+			}
 		}
-	}
-	class Func extends MultiArgLambdaFunc{
-		constructor(func,args=[],stack=undefined){
-			return new MultiArgLambdaFunc((args)=>func(...args));
+		class Func extends MultiArgLambdaFunc{
+			constructor(func,args=[],stack=undefined){
+				super((args,context,stack)=>func(...args),func.length);
+			}
 		}
+	class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
+		constructor(labels,lazy){//labels:json-like object
+			this.labels = new Map(...function*(obj){for(let i in obj)yield [i,obj[i]]}(labels));
+			this.lazy = lazy;
+		}
+		labels;//labels:Map([String],Lazy)
+		lazy;//:lazy ()
+		call(arg,context,stack){
+			if(this.lazy)return this.lazy.call(arg,context,stack);//{a>a a} x -> (a>a a) x
+			if(arg instanceof NameSpace)return new NameSpace({...this.labels,...arg.labels},arg.lazy);
+			else return arg.call(this);
+		}
+		static get = new MultiArgLambdaFunc(([obj,property],context,stack)=>
+			(obj=obj.evalFully())instanceof NameSpace?obj.labels.get()??Lambda.null:Lambda.null
+		);
 	}
 	class Float extends Exp_Number{
 		constructor(value){
@@ -340,57 +362,60 @@ const TEST = false;
 		}
 	}
 	class Calc extends ArrowFunc{//calculation
-		constructor(func,args=[],stack=undefined){
+		constructor(func,fallBackFunc,args=[]){
 			super(func)//func:(...Number[])->Number
+			this.fallBackFunc = fallBackFunc;//:Exp
 			this.args = args;//:Lazy[]
-			if(args.length>=func.length){
-				const ans = this.func(...args.map(v=>+Lazy.toInt(v,stack)));
-				const nullValue = Lambda.null;
-				return typeof ans == "number"?isNaN(ans)?nullValue:new Int(ans):ans??nullValue;//can return custom Exp objects.
-			}
 		}
 		//isOperater:bool&Operator?
 		call(arg,context,stack){//Int->Int-> ... Int-> Int
-			return new this.constructor(this.func,[...this.args,arg],stack)
+			let args = [...this.args,arg];
+			if(this.args.length+1>=this.func.length){
+				const ans = this.func(...args.map(v=>+Lazy.toInt(v,stack)));
+				const nullValue = Lambda.null;
+				return typeof ans == "number"?
+					isNaN(ans)?
+						this.fallBackFunc==undefined?
+							nullValue:
+							nullValue//args.reduce((s,v)=>s.call(v,context,stack),this.fallBackFunc)
+						:new Int(ans)
+					:ans??nullValue
+				;//can return custom Exp objects.
+			}
+			return new this.constructor(this.func,this.fallBackFunc,[...this.args,arg],stack)
 		}
 		eval(stack){return this}
 	}
-	class List extends Exp_Array{
+	class List extends Exp_Array{//bool>bool item0 tail
 		constructor(...list){
 			super(list.length);
 			Object.assign(this,list);
 		}
 		call(arg,context,stack){
-			return this.concat(arg,context,stack);
+			return this.constructor.concat.call(this,context,stack).call(arg,context,stack);
 		}
 		eval(){return this}
-		get = Object.assign(new Calc(index=>this[index|0]),{id:List.get.id});
-		concat = Object.assign(new ArrowFunc((list,context,stack)=>stack.doOnStack(list,
-			(list=list.eval())instanceof List?Object.assign(new List(...this,...list),{id:this.id}):
-			Object.assign(new List(...this,list),{id:this.id})//'[1 2] 3' => '[1 2] [3]' => '[1 2 3]'
-		)));
-		list = [];
-		static get = {id:undefined};//is defined later
+		static toList(exp){
+			if(exp instanceof List)return List;
+			return Object.assign(new List(),exp.id);
+		}
+		static get = new class List_Get extends MultiArgLambdaFunc{}(([array,index],context,stack)=>{
+			let ans;
+			array=array.evalFully(stack);
+			if(array instanceof List)ans = array[index.evalFully()|0];
+			return ans??Lambda.null;
+		},2);//is defined later
+		static concat = new class List_Concat extends MultiArgLambdaFunc{}(([listA,listB],context,stack)=>{
+			listA=listA.evalFully(stack);
+			listB=listB.evalFully(stack);
+			return Object.assign(
+				listB instanceof List?new List(...listA,...listB)
+				:listA instanceof List?new List(...this,listB)
+				:new List(listA,listB)//'[1 2] 3' => '[1 2] [3]' => '[1 2 3]'
+			,{id:listA.id})
+		},2);
 		static get_expression = {id:undefined};//is defined later
 	}
-	class Reference extends Exp{//wrapper for Lazy
-		constructor(value,levelDif,id){
-			super();
-			this.value=value;//:Exp
-			this.levelDif=levelDif;//:Number
-			this.id = id;//:Number
-		}
-		call(arg,context=new Context,stack){
-			//context??= new Context();
-			stack.unshift(this.id);
-			let value = Object.assign(new Lazy,this.value);
-			value.context=context.getContext(this.levelDif);
-			let ans = value.call(arg,context,stack);
-			stack.shift();
-			return ans;
-		}
-		eval(stack){return this.value.eval(stack);}
-	};
 	//const Y = new Lambda(new Lambda(0,0),new Lambda(new Lambda(2,0),[0,0]));
 	let Y = new Lambda(new Lambda(1,[0,0]),new Lambda(1,[0,0]));
 	let vec2 = new Lambda(new Lambda({x:1,y:0}));//x>y>{x y}
@@ -445,7 +470,7 @@ var files={
 	addInbuilt(obj,name="SOURCE"){
 		let word = "SOURCE:[ "+name+" ]";
 		obj.id = this.getDataFromID.push({
-			line:1,column:1,word,
+			line:1,column:1,word,maxRecur:Infinity,
 			file:new this.FileData({expression:obj,lines:[word]}),
 		})-1;
 		return obj;
@@ -492,7 +517,7 @@ function compile (text,fileName){
 		let stack = [];
 		for(let i=0;i<words.length;i++){
 			let word = words[i];
-			let value = [word,fileID+i,file];
+			let value = [word,fileID+i,file];//:[String,id:Number,FileData]
 			if(word.match(/^\//))list.push(value);
 			else if(word.match(/[(\[{]/)){
 				stack.push(list);
@@ -649,7 +674,7 @@ function compile (text,fileName){
 							}
 						};
 						params = [];// [a b c] = 
-						tree[i+1].forEach((v,i,word)=>typeof(word=getWord(tree,i))=="string" && !"()[]{}".includes(word)?params.push(word):0);
+						tree[i+1].forEach((v,i,tree,word)=>typeof(word=getWord(tree,i))=="string" && !"()[]{}".includes(word)?params.push(word):0);
 						i+=3;
 					}
 					else params = [tree[i++]];
@@ -869,17 +894,16 @@ function compile (text,fileName){
 				:bool_false
 			;
 			context.startLabels= new Map([
-				//TODO: allow '!!a' -> '(! (! a))'
 				["!" ,  i,new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
 				["~" ,  i,new Calc((a)=>~a),1],
-				["++",  i,new Calc((a)=>a+1),1],
+				["++",  i,new Calc((a)=>a+1,),1],
 				["--",  i,new Calc((a)=>a-1),1],
 				["&" ,++i,new Calc((a,b)=>a&b),2],
 				["|" ,  i,new Calc((a,b)=>a|b),2],
 				["^" ,  i,new Calc((a,b)=>a^b),2],
 				["%" ,  i,new Calc((a,b)=>a%b),2],
 				["**",  i,new Calc((a,b)=>a**b),2],
-				["*" ,++i,new Calc((a,b)=>a*b),2],
+				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],context,stack)=>a.call(b.call(f,undefined,stack),undefined,stack),2)),2],
 				["/" ,  i,new Calc((a,b)=>a/b),2],
 				["+" ,++i,new Calc((a,b)=>a+b),2],
 				["-" ,  i,new Calc((a,b)=>a-b),2],
@@ -910,14 +934,14 @@ function compile (text,fileName){
 				if(match.parent.pattern == "::" && i==0)match.funcLevel--; //'r' does use the inner '::' context
 				let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 				if(match.pattern == "="){//assignment
-				if(bracketParent.pattern==","){
-					{//set up assignment properties
-						bracketParent.startLabels ??= new Map();//String|Number => Param
-						bracketParent.currentLabels ??= new Map();
-						bracketParent.refs ??= new Set();//:Set(BracketPattern) where p.refs.get(x).refs.get(p) == undefined
+					if(bracketParent.pattern==","){
+						{//set up assignment properties
+							bracketParent.startLabels ??= new Map();//String|Number => Param
+							bracketParent.currentLabels ??= new Map();
+							bracketParent.refs ??= new Set();//:Set(BracketPattern) where p.refs.get(x).refs.get(p) == undefined
+						}
+						bracketParent=bracketParent.parent;
 					}
-					bracketParent=bracketParent.parent;
-				}
 					//assume: bracketParent == match.parent
 					{//set up assignment properties
 						bracketParent.startLabels ??= new Map();//String|Number => Param
@@ -993,7 +1017,7 @@ function compile (text,fileName){
 							if(param.owner.type == "function"){
 								let refLevel = match.funcLevel-param.owner.funcLevel;
 								if(param.owner.options[0]=="{"){//is multi assign namespace
-									match.value = new Lazy(new Dot(param.name[0]),refLevel);
+									match.value = new Lazy(NameSpace.dot,new String(param.name[0]),refLevel);
 								}
 								else if(param.owner.options[0]=="["){//is multi assign list
 									match.value = new Lazy(List.get,refLevel,new Int(param.index));
@@ -1012,7 +1036,7 @@ function compile (text,fileName){
 							}
 							if(match.value==undefined)throw Error("compiler error");
 						}
-						else if(!param){//if not overwritten && is number literal
+						else if(!param){//if not overwritten && is number literal '1'
 							match.value = new Int(parseNumber(match.arg));
 						}
 					}
@@ -1065,7 +1089,7 @@ function compile (text,fileName){
 						let paramLen = operator.operatorParamObj.length;
 						let useLeftArg = paramLen == 2;
 						if(i<list.length-1)//has right argument
-						if(i>0 && !operator.operatorParamObj.isFirst){
+						if(i>0 && !operator.operatorParamObj.isFirst){// '1+' in '1+2' and '1 ++2' -> 
 							let newOperation = Object.assign([operator],{id:operator.id});
 							let splice=list.splice(i-useLeftArg,paramLen+1);
 							newOperation.push(...(paramLen==2?[splice[0],splice[2]]:[splice[1]]));
@@ -1129,16 +1153,12 @@ function tryCatch (foo,throwError,exceptionValue){
 		return exceptionValue;
 	}
 }
+//bug: 'a = b = 1' -> null error
 tryCatch(()=>{//λ
 	let s = new Stack;
 	compile(`
-		log>eval>
-		Infinity::(
-			i = n>n(++)0,
-			Y = f>r (x>f(x x)) r=a>a a,
-			factorial = Y !>x> x::(x == 0 1 x * (!,0+x::(--x))),
-			! = Infinity::(Y !>x> x == 0 1 x * (! --x)),
-			log(eval(factorial 10))//max 538
+		log>eval>(
+			log (eval,f> 2 (3 f),++, 0)
 		)
 	`)
 	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval()),v][1]))
