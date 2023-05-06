@@ -1063,9 +1063,6 @@ function compile (text,fileName){
 						while(match.parent.value.includes(match.value)){
 							match.parent.value.splice(index,1);
 						}
-					else if(match.value.length == 1 || index == 0){
-						match.parent.value.splice(index,1,...match.value);
-					}
 				}
 			}
 			//handle operator priorities
@@ -1100,6 +1097,15 @@ function compile (text,fileName){
 							//'a + b' -> '(+ a b)'
 							//'! a' -> '(! a)'
 						}
+					}
+				}
+			}
+			//remove single commas 'a,b' -> 'a (b)' -> 'a b'
+			for(let [match,i,bracketParent] of forEachPattern()){
+				if(match.pattern==","){
+					let index = match.parent.value.indexOf(match.value);
+					if(match.value.length == 1 || index == 0){
+						match.parent.value.splice(index,1,...match.value);
 					}
 				}
 			}
@@ -1158,7 +1164,7 @@ tryCatch(()=>{//λ
 	let s = new Stack;
 	compile(`
 		log>eval>(
-			log (eval,f> 2 (3 f),++, 0)
+			log (a>a,(1,++,0))//(,f> 2 (3 f),++, 0)
 		)
 	`)
 	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval()),v][1]))
