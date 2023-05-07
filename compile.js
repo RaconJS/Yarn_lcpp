@@ -26,7 +26,11 @@ const TEST = false;
 	class WordData{
 		constructor(data){
 			Object.assign(this,data);
+			this.file=data.file;
 		}
+		get file(){return this.#file}
+		set file(v){this.#file=v}
+		#file;
 		//line:1,column:1,lines,file,word:"",maxRecur:Infinity
 		throwError(type,errorMessage,error,stack){//error = str=>Error(str)
 			//note: lines and colums are counted from 1
