@@ -10,6 +10,7 @@ const TEST = false;
 		return list.reduce((s,v)=>Math.max(s,typeof v=="number"?v:s.findHighestContext()),-1);
 	}
 	class Exp{
+		//id:WordData
 		call(arg,context,stack){return this.eval(stack).call(arg,context,stack)}
 		eval(stack){return this}//lazy evaluatuation
 		evalFully(stack){return (this instanceof Lazy?this:new Lazy(this)).evalFully(stack)}//non-lazy evaluation
@@ -19,7 +20,7 @@ const TEST = false;
 			if(typeof value == "number")return new Int();
 		}
 	}
-	function ID({data}){//data:WordData
+	function ID(data){//data:WordData
 		return data;
 	}
 	class WordData{
@@ -43,7 +44,7 @@ const TEST = false;
 			);
 		}
 		displayWordInLine(msg){
-			let line = this.lines[this.line];
+			let line = this.file.lines[this.line-1];
 			let whiteSpace = line.match(/^[\t ]*/)?.[0]??"";
 			let whiteLen = whiteSpace.length;
 			line = line.substr(whiteLen)//[whiteSpace,line]
@@ -146,7 +147,7 @@ const TEST = false;
 			super(exps.length);
 			Object.assign(this,exps);
 		}
-		id;//:number
+		id;//:WordData
 		static null = new class Null extends Exp{
 			call(arg){return arg}
 		};
@@ -166,10 +167,10 @@ const TEST = false;
 		}
 		recur;//:Lazy
 		context;//:Context?
-		id;//:Number
+		id;//:WordData
 		getRecursLeft(stack){//()-> finite Number
 			if(this.recur.length==1 && this.recur[0] == RecurSetter.forever)return Infinity;
-			let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur,context:this.context}),stack));
+			let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur.id,context:this.context}),stack));
 			return ans;
 		}
 		eval(stack=new Stack){
@@ -186,7 +187,7 @@ const TEST = false;
 			super();
 			this.value=value;//:Exp
 			this.levelDif=levelDif;//:Number
-			this.id = id;//:Number
+			this.id = id;//:WordData
 		}
 		call(arg,context=new Context,stack){
 			//context??= new Context();
@@ -235,7 +236,7 @@ const TEST = false;
 		}
 		doOnStack(arg,foo){
 			let stackableObject = arg;//expression that will be added onto the stack.
-			const data = files.getDataFromID[stackableObject.id];
+			const data = stackableObject.id;
 			let oldMaxRecur = data?.maxRecur;
 			let recurs = {value:0};//
 			if(!this.#add(stackableObject,arg,recurs)){//recurs:mut
@@ -243,8 +244,7 @@ const TEST = false;
 				//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
 				//recursion detected
 				if(1){
-					let file = files.getDataFromID[stackableObject.id].file;
-					file.throwError(stackableObject.id,"recursion", "unbounded recursion detected. Recursion level: "+recurs+"",a=>Error(a),this);
+					data.throwError("recursion", "unbounded recursion detected. Recursion level: "+recurs+"",a=>Error(a),this);
 				}else return Lambda.null;
 			}else {}
 			let ans = foo(this);
@@ -261,7 +261,7 @@ const TEST = false;
 			//recurSetter:RecurSetter
 			const stack = this;
 			let recursLeft= exp.context?.maxRecur ?? 1;
-			let data = files.getDataFromID[id];
+			let data = id;
 			let [isValid,recurs] = this.stackCheck(data.maxRecur);
 			let newRecursLeft = recursLeft + recurs;
 			let isLen1 = exp instanceof Exp_Array?exp.length == 1:false;
@@ -277,7 +277,6 @@ const TEST = false;
 		#remove(lambda){
 			if(lambda.id==undefined)return;
 			this.shift();
-			let data = files.getDataFromID[lambda.id];
 		}
 		stackCheck(maxRecur){//only checks last item
 			//:Number->[bool,Number]
@@ -449,7 +448,6 @@ const TEST = false;
 				:new List(listA,listB)//'[1 2] 3' => '[1 2] [3]' => '[1 2 3]'
 			,{id:listA.id})
 		},2);
-		static get_expression = {id:undefined};//is defined later
 	}
 	//const Y = new Lambda(new Lambda(0,0),new Lambda(new Lambda(2,0),[0,0]));
 	let Y = new Lambda(new Lambda(1,[0,0]),new Lambda(1,[0,0]));
@@ -458,13 +456,11 @@ const TEST = false;
 //----
 function loga(...logs){console.log(...logs)}
 var files={
-	getDataFromID:[],//Map(id => WordData{line,column,file,word})
 	list:new Map([]),//Map(fileName => FileData)
 	FileData:class FileData extends Exp{//data for errors
 		constructor(data){super();Object.assign(this,data);}
 		//note these properties are not used in the Expression classes.
 		text;//:string
-		id;//:number
 		words;//:string[]
 		tree;//:tree([string,id,FileData])
 		lines;//:string[]
@@ -475,17 +471,15 @@ var files={
 		eval(stack = new Stack){return this.value.eval(stack)??Lambda.null}
 		evalFully(stack = new Stack){return this.value.evalFully(stack)}
 	},
-	addInbuilt(obj,name="SOURCE"){
+	addInbuilt(exp,name="SOURCE"){
 		let word = "SOURCE:[ "+name+" ]";
-		obj.id = this.getDataFromID.push({
+		exp.id = new WordData({
 			line:1,column:1,word,maxRecur:Infinity,
-			file:new this.FileData({expression:obj,lines:[word]}),
-		})-1;
-		return obj;
+			file:new this.FileData({expression:exp,lines:[word]}),
+		});
+		return exp;
 	},
-	reset(){
-		this.getDataFromID.splice(files_startId,this.getDataFromID.length-files_startId);
-	},
+	reset(){},
 };
 let files_startId;
 {
@@ -494,12 +488,10 @@ let files_startId;
 		[Calc.prototype,"Calc"],
 		[ArrowFunc.prototype,"Function"],
 		[Int.increment,"increment"],
-		[List.get,"List.get"],
-		[List.get_expression,"(list)> bool>bool head tail {head tail} = list,"]
+		[List.get,"List.get"],//"(list)> bool>bool head tail {head tail} = list,"
 		[RecurSetter.forever],
 		[RecurSetter.forever[0]],
 	].forEach(v=>files.addInbuilt(v));
-	files_startId = files.getDataFromID.length;
 }
 function compile (text,fileName){
 	if(typeof text != "string")throw throwError_noLine("basic API", "'compile' requires a string input as the source code.",a=>Error(a));
@@ -537,7 +529,7 @@ function compile (text,fileName){
 				if(!list)data.throwError("syntax", "unballanced brackets: Too many closing brackets", a=>Error(a));
 				//assert: list[list.length-2] exists
 				let openBracket = list[list.length-2][0];
-				if(({"(":")", "[":"]", "{":"}"})[openBracket]!=word)file.throwError(i,"syntax", "unmatching brackets:'"+openBracket+"..."+word+"'", a=>Error(a));
+				if(({"(":")", "[":"]", "{":"}"})[openBracket]!=word)data.throwError("syntax", "unmatching brackets:'"+openBracket+"..."+word+"'", a=>Error(a));
 				list.push(value);
 			}
 			else list.push(value);
@@ -554,7 +546,7 @@ function compile (text,fileName){
 				constructor(data){
 					Object.assign(this,data);
 				}
-				id;//:[]SyntaxTree
+				id;//:WordData
 				type="operator";//:"operator"|"word"|"number"|"symbol"|"function"|"assignment"
 				parent;//:BracketPattern
 				isFirst;//:bool ; Is true if this is the start of a list, or can be used as the starting function.
@@ -580,7 +572,7 @@ function compile (text,fileName){
 				parent;
 				pattern='()';//'()'|'[]'|'{}'
 				list=[];//:Tree<Pattern> ; brackets only
-				id;//:index in getDataFromID
+				id;//:WordData
 			}
 			class Pattern_extra{
 				startLabels;//:Map(String,Ref)
@@ -746,7 +738,6 @@ function compile (text,fileName){
 						//prevent '(:: ... )' or ', :: ...'
 						if(isFirst){//if no 'r' argument '(::)' is parsed as a label
 							const simple = new Simple ({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
-							//file.throwError(match.id,"syntax", "Expected argument before recursion operator `::`.\nRecursion takes the form: `argument :: recursion`.\n",a=>Error(a));
 							match = simple;
 							{
 								yield match;
@@ -840,7 +831,7 @@ function compile (text,fileName){
 			if(!higherArgParent)throw Error("compiler error");
 			if(higherParamParent.parent!=higherArgParent.parent)throw Error("compiler error");
 			{//check for and prevent reference loops
-				if(higherParamParent.refs?.has?.(higherArgParent))file.throwError(match.id,"illegal reference", "recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
+				if(higherParamParent.refs?.has?.(higherArgParent))match.id.throwError("illegal reference", "recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
 			}
 			//note:
 				//From now on only things from block 'arg' can reference block 'param'
@@ -853,7 +844,7 @@ function compile (text,fileName){
 				higherArgParent.refLevel??=(higherParamParent.refLevel??-1)+1;
 				higherParamParent.refLevel??=higherArgParent.refLevel-1;
 			}
-			if(higherArgParent.refLevel<=higherParamParent.refLevel)file.throwError(match.id,"illegal reference", "complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
+			if(higherArgParent.refLevel<=higherParamParent.refLevel)match.id.throwError("illegal reference", "complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
 			higherArgParent.refs.add(higherParamParent);
 		}
 		function getParam(name,parent,parents=[]){//parents:Pattern[]?
@@ -912,7 +903,7 @@ function compile (text,fileName){
 				["^" ,  i,new Calc((a,b)=>a^b),2],
 				["%" ,  i,new Calc((a,b)=>a%b),2],
 				["**",  i,new Calc((a,b)=>a**b),2],
-				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],context,stack)=>a.call(b.call(f,undefined,stack),undefined,stack),2)),2],
+				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b],context,stack)=>new Lambda(a.call(b.call(0,undefined,stack),undefined,stack)),2)),2],
 				["/" ,  i,new Calc((a,b)=>a/b),2],
 				["+" ,++i,new Calc((a,b)=>a+b),2],
 				["-" ,  i,new Calc((a,b)=>a-b),2],
@@ -1009,7 +1000,7 @@ function compile (text,fileName){
 						if(typeof match.value == "number"){//lambda parameter
 							//validate value
 							if(match.value>match.funcLevel){
-								file.throwError(match.id,"reference", "the parameter number exceeds the amount of global scopes",a=>Error(a));
+								match.id.throwError("reference", "the parameter number exceeds the amount of global scopes",a=>Error(a));
 							}
 						}
 					}
@@ -1018,7 +1009,7 @@ function compile (text,fileName){
 						if(match.type!="number"){
 							//note: number literals & other predefined values can be used as either an Int or a parameter reference
 							if(!param){
-								file.throwError(match.id,"reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
+								match.id.throwError("reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
 							}
 							addRefParam(match,parents,param);
 							//assert: param != undefined
@@ -1125,9 +1116,8 @@ function compile (text,fileName){
 	}
 	let regex =/\s+|\/\/.*|\/\*[\s\S]*\*\/|λ|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"[^"]*"|::|(?:[!%^&*-+~<>])=|([+\-*&|^=><])\1?|[^\s]/g;
 	let lines = text.split("\n");
-	const fileID = files.getDataFromID.length;
 	const words = text.match(regex)??[];
-	const file = new files.FileData({text,words,data:[],lines,id:fileID});
+	const file = new files.FileData({text,words,lines});
 	files.list.set(fileName,file);
 	const wordsData = [];
 	words.reduce((s,v,i)=>{
@@ -1166,11 +1156,12 @@ function tryCatch (foo,throwError,exceptionValue){
 tryCatch(()=>{//λ
 	let s = new Stack;
 	compile(`
-		log>eval>(
-			log (eval,f> 2 (3 f),++, 0)
-		)
+		//log>eval>(
+		//	log (eval(f> 2 (3 f),++, 0))
+		//)
+		log>log (a>a,(0,++,1))
 	`)
-	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval()),v][1]))
+	.call(new ArrowFunc((v,c,stack)=>[loga(function map(exp){return exp.map(v=>v instanceof Array?map(v):v)}(v.eval(stack))),v][1]))
 	.call(new ArrowFunc((v,c,s)=>v.evalFully(s)))
-	.evalFully()
+	//.evalFully()
 });
