@@ -1163,10 +1163,10 @@ tryCatch(()=>{//λ
 	let s = new Stack;
 	compile(`
 		log>eval>(
-			log (a>a,(1,++,0))//(,f> 2 (3 f),++, 0)
+			log (f> 2 (3 f),++, 0)
 		)
 	`)
-	.call(new ArrowFunc((v,c,stack)=>[loga(function map(exp){return exp.map(v=>v instanceof Array?map(v):v)}(v.eval(stack))),v][1]))
+	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval(stack)),v][1]))
 	.call(new ArrowFunc((v,c,s)=>v.evalFully(s)))
 	//.evalFully()
 });
