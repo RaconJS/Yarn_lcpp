@@ -368,12 +368,14 @@ const TEST = false;
 			constructor(value,arg_f){
 				super();
 				this.value = value;//:Number|Int
-				this.foo = arg_f;//:Lazy
+				this.arg_f = arg_f;//:Lazy
 			}
-			call(arg_x,context,stack){
+			call(arg_x,context,stack){//(f>x>n f x,arg_f,arg_x)
+				if(this.arg_f == Float.increment && arg_x instanceof Float)//optimises 'n ++ 0'
+					return new (arg_x instanceof Int?Int:Float)(1+arg_x);
 				let ans = arg_x;
 				for(let i = 0;i<this.value;i++){
-					ans = this.foo.call(ans,context,stack);
+					ans = this.arg_f.call(ans,context,stack);
 				}
 				return ans;
 			}
@@ -396,9 +398,9 @@ const TEST = false;
 		}
 	}
 	class Calc extends ArrowFunc{//calculation
-		constructor(func,fallBackFunc,args=[]){
+		constructor(func,fallBackExp,args=[]){
 			super(func)//func:(...Number[])->Number
-			this.fallBackFunc = fallBackFunc;//:Exp
+			this.fallBackExp = fallBackExp;//:Exp
 			this.args = args;//:Lazy[]
 		}
 		//isOperater:bool&Operator?
@@ -409,14 +411,14 @@ const TEST = false;
 				const nullValue = Lambda.null;
 				return typeof ans == "number"?
 					isNaN(ans)?
-						this.fallBackFunc==undefined?
+						this.fallBackExp==undefined?
 							nullValue:
-							nullValue//args.reduce((s,v)=>s.call(v,context,stack),this.fallBackFunc)
+							nullValue//args.reduce((s,v)=>s.call(v,context,stack),this.fallBackExp)
 						:new Int(ans)
 					:ans??nullValue
 				;//can return custom Exp objects.
 			}
-			return new this.constructor(this.func,this.fallBackFunc,[...this.args,arg],stack)
+			return new this.constructor(this.func,this.fallBackExp,[...this.args,arg],stack)
 		}
 		eval(stack){return this}
 	}
@@ -879,7 +881,6 @@ function compile (text,fileName){
 		{
 			//applies to Patterns with type = "operator"
 			context.value = new Lazy;
-			let i=0;
 			const bool_true = new class True extends Lambda{}(new Lambda(1));
 			const bool_false = new class False extends Lambda{}(new Lambda(0));//new Int(0);
 			const equality = (a,b)=>//(Exp,Exp)-> Lambda bool
@@ -893,19 +894,20 @@ function compile (text,fileName){
 				:+a==+b?bool_true//assume: NaN!=NaN
 				:bool_false
 			;
+			let i=0;
 			context.startLabels= new Map([
-				["!" ,  i,new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
+				["!" ,  i,new Lambda(0,bool_false,bool_true)],//new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
 				["~" ,  i,new Calc((a)=>~a),1],
-				["++",  i,new Calc((a)=>a+1,),1],
+				["++",  i,new Calc((a)=>a+1,new MultiArgLambdaFunc(([a,f,x],c,s)=>f.call(a.call(f,c,s).call(x,c,s),c,s),3)),1],
 				["--",  i,new Calc((a)=>a-1),1],
 				["&" ,++i,new Calc((a,b)=>a&b),2],
 				["|" ,  i,new Calc((a,b)=>a|b),2],
 				["^" ,  i,new Calc((a,b)=>a^b),2],
 				["%" ,  i,new Calc((a,b)=>a%b),2],
-				["**",  i,new Calc((a,b)=>a**b),2],
-				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b],context,stack)=>new Lambda(a.call(b.call(0,undefined,stack),undefined,stack)),2)),2],
+				["**",  i,new Calc((a,b)=>a**b,new MultiArgLambdaFunc(([a,b],context,stack)=>b.call(a,context,stack),2)),2],
+				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],c,s)=>a.call(b.call(f,c,s),c,s),3)),2],
 				["/" ,  i,new Calc((a,b)=>a/b),2],
-				["+" ,++i,new Calc((a,b)=>a+b),2],
+				["+" ,++i,new Calc((a,b)=>a+b,new MultiArgLambdaFunc(([a,b,f,x],c,s)=>a.call(f,c,s).call(b.call(f,c,s).call(x,c,s),c,s),4)),2],
 				["-" ,  i,new Calc((a,b)=>a-b),2],
 				["==",++i,new ArrowFunc(a=>new ArrowFunc(b=>equality(a,b))),2],
 				["<" ,  i,new Calc((a,b)=>a<b?bool_true:bool_false)],
@@ -916,7 +918,14 @@ function compile (text,fileName){
 				["||",  i,new Lambda(new Lambda(1,1,0)),2],
 				["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
 			].map(v=>[
-				[files.addInbuilt(v[2],v[0]),v[2].name=v[0],v=new Operator(...v)][2].name[0],v
+				[
+					files.addInbuilt(v[2],v[0]),
+					v[2][0]instanceof Lambda?files.addInbuilt(v[2][0],v[0]):undefined,//add ID's to the `Lambda(Lambda())` operators
+					v[2].name=v[0],
+					v[2] instanceof Calc &&v[2].fallBackExp!=undefined?files.addInbuilt(v[2].fallBackExp,v[0]):undefined,
+					v=new Operator(...v),
+				][4].name[0],
+				v
 			]));
 			let name = "Infinity";
 			context.startLabels.set(name,new Param({name:[name,undefined],owner:new BracketPattern({parent:context}),value:RecurSetter.forever}));
@@ -1086,7 +1095,7 @@ function compile (text,fileName){
 						let paramLen = operator.operatorParamObj.length;
 						let useLeftArg = paramLen == 2;
 						if(i<list.length-1)//has right argument
-						if(i>0 && !operator.operatorParamObj.isFirst){// '1+' in '1+2' and '1 ++2' -> 
+						if(i>0 && !operator.operatorParamObj.isFirst){// '1+' in '1+2' and '1 ++' in '1 ++2' -> '(+ 1 2)' and '1 (++ 2)'
 							let newOperation = Object.assign([operator],{id:operator.id});
 							let splice=list.splice(i-useLeftArg,paramLen+1);
 							newOperation.push(...(paramLen==2?[splice[0],splice[2]]:[splice[1]]));
@@ -1163,7 +1172,10 @@ tryCatch(()=>{//λ
 	let s = new Stack;
 	compile(`
 		log>eval>(
-			log (f> 2 (3 f),++, 0)
+			list = item>tail>bool>bool item ,
+			get = array>index>array,
+
+			log (f> 2 (3 f),++, 0),
 		)
 	`)
 	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval(stack)),v][1]))
