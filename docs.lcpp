@@ -625,6 +625,11 @@
 		//';' is similar to ',' except ';' also exits all '#' and '@' scopes, into the local blacket scope.
 	//strings '"a"' :
 		//similar properties to an array
+		//can use "" '' `` for strings
+		//characters in strings can be escaped with backslashes
+		//e.g.
+			"\"123\"\nab\c"
+			'123'
 	//pattern '@ ... ;' , '(@ ...)' :
 
 		//Defines a block of non-meta code.
