@@ -15,20 +15,39 @@ const TEST = false;
 		eval(stack){return this}//lazy evaluatuation
 		evalFully(stack){return (this instanceof Lazy?this:new Lazy(this)).evalFully(stack)}//non-lazy evaluation
 		toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
-		static fromJS(value){
-			if(typeof value == "function")return new Func(value);
-			if(typeof value == "number")return new Int();
+		static fromJS(value,fileName){//:Exp
+			const addId = v=>Object.assign(v,{id:new WordData({fileName})});
+			let ans;
+			switch(typeof value){
+				case"function":ans = new Func(value);break;
+				case"number":ans = value===value|0?new Int(value):new Float(value);break;
+				case"string":ans = new StringExp(str);break;
+				case"undefined":ans = Lambda.null;break;
+				case"object":
+					ans =  
+						value instanceof Exp?value:
+						value instanceof Exp_Array?value:
+						value instanceof Exp_Number?value:
+						value instanceof Exp_String?value:
+						value instanceof Array?new value:
+						new NameSpace(value)
+					;
+					if(ans.id==undefined)ans.id = addId(ans);
+				break;
+			}
+			return ans == Lambda.null?ans:addId(ans);
 		}
+		static symbol = Symbol("is expression");
 		//labels:Map(string=>Exp);
 	}
 	class Exp_Array extends Array{}
 	class Exp_Number extends Number{}
 	class Exp_String extends String{}
-	for(let i of ["call", "eval", "evalFully", "toJS"]){
-		Exp_Array.prototype[i]??=
-		Exp_Number.prototype[i]??=
-		Exp_String.prototype[i]??=
-		Exp.prototype[i]
+	Exp.prototype[Exp.symbol] = true;
+	for(let i of ["call", "eval", "evalFully", "toJS","symbol",Exp.symbol]){
+		Exp_Array.prototype[i]??=Exp.prototype[i];
+		Exp_Number.prototype[i]??=Exp.prototype[i];
+		Exp_String.prototype[i]??=Exp.prototype[i];
 	}
 	var files={
 		list:new Map([]),//Map(fileName => FileData)
@@ -49,7 +68,9 @@ const TEST = false;
 		addInbuilt(exp,name="SOURCE"){
 			let word = "SOURCE:[ "+name+" ]";
 			exp.id = new WordData({
-				line:1,column:1,word,maxRecur:Infinity,
+				line:1,column:1,fileName:["SOURCE"],
+				word,
+				maxRecur:Infinity,
 				file:new this.FileData({expression:exp,lines:[word]}),
 			});
 			return exp;
@@ -64,9 +85,11 @@ const TEST = false;
 			Object.assign(this,data);
 			this.file=data.file;
 		}
+		//getter and setter used to make console logs look neater
 		get file(){return this.#file}
 		set file(v){this.#file=v}
 		#file;
+		maxRecur = Infinity;
 		//line:1,column:1,lines,file,word:"",maxRecur:Infinity
 		throwError(type,errorMessage,error,stack){//error = str=>Error(str)
 			//note: lines and colums are counted from 1
@@ -93,6 +116,12 @@ const TEST = false;
 				+this.line+" |" +line+"\n"
 				+" ".repeat(lineLen)+" |" +" ".repeat(this.column-1-whiteLen)+"^".repeat(this.word.length)+" "+msg
 			;
+		}
+	}
+	class FilelessWordData extends WordData{
+		//word
+		displayWordInLine(){
+			return "SOURCE: "+this.word;
 		}
 	}
 	class Lazy extends Exp_Array{//:Exp ; lazy evaluation
@@ -132,21 +161,26 @@ const TEST = false;
 				typeof v == "string"?v://simple raw string cannot be called
 				//typeof v == "string"?:
 				v instanceof Lambda?Object.assign(new Lazy(v),{context,id:v.id}):
-				v instanceof Lazy?v:
-				v instanceof Int?v:
-				v instanceof NameSpace?v:
-				v instanceof List?v:
 				v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{...v,context,id:v.id}):
 				v instanceof Reference?Object.assign(new Lazy(v.value),{id:v.id,context:context.getContext(v.levelDif)}):
+				v instanceof Lazy?v:
+				v instanceof Float?v:
+				v instanceof Int?v://assume (Int extends Float) or (Float extends Int)
+				v instanceof List?v:
+				v instanceof StringExp?v:
+				v instanceof NameSpace?v:
+				v instanceof Exp||
+				v instanceof Exp_Array||
+				v instanceof Exp_String||
+				v instanceof Exp_Number?v:
 				v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id}):
-				typeof v.call == "function"?v:
-				v instanceof Object?(v=>{
+				/*v instanceof Object?(v=>{
 					let labels=new Map();
 					for(let i in v){
 						labels.set(i,Object.assign(new Lazy(v[i]),{}));
 					}
 					return new NameSpace(labels);
-				})(v):
+				})(v):*/
 				v//uncallable object
 			).reduce((s,v)=>
 				stack.doOnStack(v,stack=>s.call(v,context,stack))
@@ -199,9 +233,10 @@ const TEST = false;
 		recur;//:Lazy
 		context;//:Context?
 		id;//:WordData
-		getRecursLeft(stack){//()-> finite Number
+		getRecursLeft(stack){//()-> finite Number | Infinity
 			if(this.recur.length==1 && this.recur[0] == RecurSetter.forever)return Infinity;
 			let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur.id,context:this.context}),stack));
+			if(+ans == Infinity||+ans<0||isNaN(+ans))ans = 0;//make finite
 			return ans;
 		}
 		eval(stack=new Stack){
@@ -211,6 +246,7 @@ const TEST = false;
 				}
 			).eval(stack);
 		}
+		toJS(){return this[0].toJS?.()}
 		static forever = new Lambda(new Lambda(0));
 	}
 	class Reference extends Exp{//wrapper for Lazy
@@ -230,6 +266,7 @@ const TEST = false;
 			return ans;
 		}
 		eval(stack){return this.value.eval(stack);}
+		toJS(){return this.value.toJS?.()}
 	};
 	class Context{
 		static null;//:Context
@@ -354,6 +391,7 @@ const TEST = false;
 			call(arg,context,stack){//Int->Int-> ... Int-> Int
 				return this.func(arg,context,stack);
 			}
+			toJS(){return this.func}
 		}
 		class MultiArgLambdaFunc extends Exp{//arraw function
 			constructor(func,len,args=[]){
@@ -369,11 +407,13 @@ const TEST = false;
 				}
 				else return new this.constructor(this.func,this.len,[...this.args,arg]);
 			}
+			toJS(){return (...args)=>this.func([...args])}
 		}
 		class Func extends MultiArgLambdaFunc{
 			constructor(func,args=[],stack=undefined){
 				super((args,context,stack)=>func(...args),func.length);
 			}
+			toJS(){return this.func}
 		}
 	class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
 		constructor(labels,exp){//labels:Map(string,Exp)
@@ -387,9 +427,16 @@ const TEST = false;
 			if(arg instanceof NameSpace)return new NameSpace(new Map(...this.labels,...arg.labels),arg.exp);
 			else return new NameSpace(this.labels,arg);
 		}
+		toJS(){
+			let newObj = {};
+			for(let [v,i] of this.labels){
+				newObj[i]=v.toJS?.()??v;
+			}
+			return newObj;
+		}
 		static get = new class NameSpace_Get extends MultiArgLambdaFunc{}(function get([obj,property],context,stack){
-			obj = obj.evalFully();
-			property = property.evalFully();
+			obj = obj.evalFully(stack);
+			property = property.evalFully(stack);
 			getIndex:if(property instanceof Float){
 				if(obj instanceof List)return obj[property|0]??List.null;
 				if(obj instanceof NameSpace)break getIndex;
@@ -419,6 +466,7 @@ const TEST = false;
 		constructor(value){
 			super(value);
 		}
+		toJS(){return+this}
 		static Part1 = class IntPart extends Exp{
 			constructor(value,arg_f){
 				super();
@@ -484,21 +532,50 @@ const TEST = false;
 			Object.assign(this,list);
 		}
 		labels
+		static #ListWithEnd = class extends Exp{
+			constructor(list,end,id){
+				super();
+				this.#list=list;
+				this.#end = end;
+				this.id = id;
+				if(this.#list.length<1)throw Error("compiler error");
+			}
+			#list;//:List|Array
+			#end;//:Exp
+			id;//:ID
+			call(arg,context,stack){
+				let bool = arg;
+				let head = this.#list[0];
+				let tail;
+				if(this.#list.length == 1)tail = this.end;
+				else {
+					//note don't need to add ID to the new List since it cannot be accessed outside this class
+					tail = new this.constructor([...this.#list],this.#end);
+					tail.#list.shift();
+				}
+				return bool.call(head,context,stack).call(tail,context,stack);
+			}
+		}
 		call(arg,context,stack){
 			let id = this.id;
-			return Object.assign(new Lambda(),{id});
+			return Object.assign(new this.constructor.#ListWithEnd(this,arg),{id});
 			this.constructor.concat.call(this,context,stack).call(arg,context,stack);
 		}
 		eval(){return this}
-		static null = new class EndOfList extends Exp{call(){return this}}//a>(a>b>a a,a>b>a a)
-		static toList(exp){
-			if(exp instanceof List)return List;
+		toJS(){return [...this.map(v=>v.toJS?.()??v)]}
+		static null = new class EndOfList extends Exp{
+			toJS(){return null};
+			call(){return this}
+		}//a>(a>b>a a,a>b>a a)
+		static toList(exp,stack){
+			exp = exp.evalFully(stack);
+			if(exp instanceof List)return exp;
 			return Object.assign(new List(),exp.id);
 		}
 		static get = new class List_Get extends MultiArgLambdaFunc{}(([array,index],context,stack)=>{
 			let ans;
 			array=array.evalFully(stack);
-			if(array instanceof List)ans = array[index.evalFully()|0];
+			if(array instanceof List)ans = array[index.evalFully(stack)|0];
 			return ans??Lambda.null;
 		},2);//is defined later
 		static concat = new class List_Concat extends MultiArgLambdaFunc{}(([listA,listB],context,stack)=>{
@@ -510,29 +587,53 @@ const TEST = false;
 				:new List(listA,listB)//'[1 2] 3' => '[1 2] [3]' => '[1 2 3]'
 			,{id:listA.id})
 		},2);
-		static listArgsId = files.addInbuilt({});
+		static #spairIDs = {
+			int:new FilelessWordData({word:"List_int"}),
+			list:new FilelessWordData({word:"List_list"})
+		};
 		static map = new class List_Map extends MultiArgLambdaFunc{}(
 			([list,foo],context,stack)=>stack.doOnStack(List.map,stack=>
-				(list=this.toList(list)) instanceof List?
+				(list=this.toList(list,stack)) instanceof List?
 					 Object.assign(
 						list.map(
-							(v,i,a)=>Object.assign(
-								foo.call(
-									new List(v,new Int(i),a),
-									context,
-									stack
-								),
-								listArgsId
-							)
+							(v,i,a)=>foo.call(
+								Object.assign(new List(v,Object.assign(new Int(i),this.#spairIDs.int),a),this.#spairIDs.list),
+								context,
+								stack
+							),
 						),
 						{id:list.id}
 					)
 				:Lambda.null
 			)
 		,2);
+		//similar to Int(), same as 'l>f>x>l.length ([s i a]>[f[s l.(i) i a] ++i a])[x 0 l]'
+		static forEach = new class List_Map extends MultiArgLambdaFunc{}(
+			([list,foo,startingState],context,stack)=>stack.doOnStack(List.map,stack=>
+				(list=this.toList(list,stack)) instanceof List?list.reduce(
+					(s,v,i,a)=>foo.call(
+						Object.assign(new List(s,v,Object.assign(new Int(i),this.#spairIDs.int),a),this.#spairIDs.list),
+					context,stack),
+				startingState)
+				:Lambda.null
+			)
+		,3);
+		//same as 'l>f>l.length ([s i a]>[f[s l.(i) i a] ++i a])[l.(0) 0 l]'
+		static reduce = new class List_Map extends MultiArgLambdaFunc{}(
+			([list,foo],context,stack)=>stack.doOnStack(List.map,stack=>
+				(list=this.toList(list,stack)) instanceof List?list.reduce(
+					(s,v,i,a)=>foo.call(
+						Object.assign(new List(s,v,Object.assign(new Int(i),this.#spairIDs.int),a),this.#spairIDs.list),
+					context,stack),
+				):Lambda.null
+			)
+		,2);
 		static methods = new Map([
 			["get",this.get],
 			["concat",this.concat],
+			["map",this.map],
+			["forEach",this.forEach],
+			["reduce",this.reduce],
 		]);
 	}
 	class StringExp extends Exp_String{
@@ -543,6 +644,7 @@ const TEST = false;
 			if(arg instanceof StringExp)return new StringExp(this+arg);
 			else return List.concat.call(this,context,stack).call(arg,context,stack);
 		}
+		toJS(){return""+this}
 	}
 	//const Y = new Lambda(new Lambda(0,0),new Lambda(new Lambda(2,0),[0,0]));
 	let Y = new Lambda(new Lambda(1,[0,0]),new Lambda(1,[0,0]));
@@ -1033,7 +1135,11 @@ function compile (text,fileName){
 					["^" ,  i,new Calc((a,b)=>a^b),2],
 					["%" ,  i,new Calc((a,b)=>a%b),2],
 					["**",  i,new Calc((a,b)=>a**b,new MultiArgLambdaFunc(([a,b],context,stack)=>b.call(a,context,stack),2)),2],
-					["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],c,s)=>a.call(b.call(f,c,s),c,s),3)),2],
+					["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],c,s)=>
+						a instanceof List && b instanceof List ?Object.assign(new List(...a,...b),{id:a.id}):
+						a instanceof StringExp && b instanceof StringExp ?Object.assign(new StringExp(a+b),{id:a.id}):
+						a.call(b.call(f,c,s),c,s),3)
+					),2],
 					["/" ,  i,new Calc((a,b)=>a/b),2],
 					["+" ,++i,new Calc((a,b)=>a+b,new MultiArgLambdaFunc(([a,b,f,x],c,s)=>a.call(f,c,s).call(b.call(f,c,s).call(x,c,s),c,s),4)),2],
 					["-" ,  i,new Calc((a,b)=>a-b),2],
@@ -1157,7 +1263,7 @@ function compile (text,fileName){
 						else if(match.type=="string"){
 							if(!param){
 								let string = parseString(match.arg);
-								match.value = Object.assign(new Exp_String(string),{id:match.id});
+								match.value = Object.assign(new StringExp(string),{id:match.id});
 							}
 						}
 						if(match.value == undefined) {
@@ -1311,14 +1417,14 @@ function compile (text,fileName){
 	words.reduce((s,v,i)=>{
 		s.word = v;
 		wordsData.push(s);
-		s = new WordData(s);
+		s = new WordData(s);//assume: this creates a new object
 		if(v.match("\n")){
 			s.line += (v.match(/\n/g)?.length??0);
 			s.column = (v.match(/(?<=\n).+$/)?.[0]?.length??0)+1;//assume: column >= 1
 		}
 		else s.column+=v.length;
 		return s;
-	},new WordData({line:1,column:1,file,word:"",maxRecur:Infinity}));
+	},new WordData({line:1,column:1,fileName,file,word:"",maxRecur:Infinity}));
 	let main=()=>{
 		const tree = treeParse(wordsData);
 		const context = parseContexts(tree);
@@ -1344,12 +1450,21 @@ function tryCatch (foo,throwError,exceptionValue){
 tryCatch(()=>{//λ
 	let s = new Stack;
 	compile(`
-		log>eval>(
-			a = ["a" "b" "c"],
-			log a.length //([1 . 2 . 3])
+		log>eval>toJS>(
+			a = [1 2 3],
+			log (
+				toJS(
+					eval(
+						Infinity::(
+							a.reduce([s v]>s+v)
+						)
+					)
+				)
+			)
 		)
 	`)
-	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval(stack)),v][1]))
+	.call(new ArrowFunc((v,c,stack)=>[loga(v[Exp.symbol]?v.eval(stack):v),v][1]))
 	.call(new ArrowFunc((v,c,s)=>v.evalFully(s)))
+	.call(new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s).toJS():v))
 	//.evalFully()
 });
