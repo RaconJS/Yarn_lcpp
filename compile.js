@@ -387,7 +387,7 @@ const TEST = false;
 			if(arg instanceof NameSpace)return new NameSpace(new Map(...this.labels,...arg.labels),arg.exp);
 			else return new NameSpace(this.labels,arg);
 		}
-		static get = new MultiArgLambdaFunc(function get([obj,property],context,stack){
+		static get = new class NameSpace_Get extends MultiArgLambdaFunc{}(function get([obj,property],context,stack){
 			obj = obj.evalFully();
 			property = property.evalFully();
 			getIndex:if(property instanceof Float){
@@ -407,13 +407,13 @@ const TEST = false;
 				}
 				if(List.methods.has(propertyStr))return List.methods.get(propertyStr).call(obj,context,stack);
 			}
-			else return Lambda.null;
+			return Lambda.null;
 			obj instanceof List ||
 			obj instanceof Float ||
 			obj instanceof StringExp
 			Lambda.null
-		}
-		);
+		},2);
+		static dot = this.get;
 	}
 	class Float extends Exp_Number{
 		constructor(value){
@@ -549,7 +549,7 @@ const TEST = false;
 	let vec2 = new Lambda(new Lambda({x:1,y:0}));//x>y>{x y}
 	let recur = new Lambda();
 //----
-function loga(...logs){console.log(...logs)};
+function loga(...logs){console.log(...logs);return logs[0]};
 let files_startId;
 {
 	[
@@ -655,7 +655,7 @@ function compile (text,fileName){
 				refs;//:Set(Pattern) & Tree(Pattern)
 				refLevel;//:Number
 				funcLevel;//:Number ; number of nested lambdas
-			};
+			}
 			class Param{
 				constructor(data){Object.assign(this,data)}
 				name;//:[String,Number] ; name of the parameter or label
@@ -707,7 +707,7 @@ function compile (text,fileName){
 			let id = tree[i][1];
 			let pattern = "";
 			let options="";//'()=' '()<=>'
-			let params=[];//:Tree|[String,Number]
+			let params=[];//:Tree|[String,Number][]
 			let hasOwnContext=false;
 			let type="operator";
 			let oldI=i;
@@ -755,7 +755,7 @@ function compile (text,fileName){
 							}
 						};
 						params = [];// [a b c] = 
-						tree[i+1].forEach((v,i,tree,word)=>typeof(word=getWord(tree,i))=="string" && !"()[]{}".includes(word)?params.push(word):0);
+						tree[i+1].filter(filterTree).forEach((v,i,tree,word)=>typeof(word=getWord(tree,i))=="string" && !"()[]{}".includes(word)?params.push(tree[i]):0);
 						i+=3;
 					}
 					else params = [tree[i++]];
@@ -783,6 +783,27 @@ function compile (text,fileName){
 					++i;
 				}
 			}
+			if(!pattern){//dot operator
+				hasOwnContext=false;
+				i=oldI;
+				options="";
+				params = [];
+				if(getWord(tree,i)=="."){//'.1' '.b' or '. exp'
+					pattern = ".";
+					++i;
+					if(word = getWord(tree,i).match(numberRegex)){
+						params = [tree[i]];
+						options = "index";
+						++i;
+					}
+					else if(word = getWord(tree,i).match(/^\w+$/)){
+						params = [tree[i]];
+						options = "property";
+						++i;
+					}
+					hasOwnContext = true;
+				}
+			}
 			if(!pattern){
 				hasOwnContext=false;
 				i=oldI;
@@ -804,17 +825,39 @@ function compile (text,fileName){
 			let context = bracketContext;
 			let word;
 			let isFirst=true;
-			tree = tree.filter((v,i)=>typeof v[0]!="string"||!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/));
+			tree = tree.filter(filterTree);
 			for(let i=0;i<tree.length;){
 				word = getWord(tree,i);
 				let match = match_pattern(tree,i);
-				if(!isFirst)while(context.pattern=="::"){//takes in a single, short expression
+				if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression
 					context=context.parent;
 				}
 				if(match.pattern||(match instanceof Simple)){
 					({i}=match);
-					if(match.pattern == "::"){//get arg match for 'r :: a'
-
+					if(match.pattern == "."){//'a.b'
+						//prevent '(. b)' or ', . b' from evaling to '()'
+						if(isFirst||context.pattern=="."){//if no 'a' or 'b' argument '(.)' is parsed as a label
+							//'a . . b' -> '(. a (.))b'
+							const simple = new Simple({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
+							simple.value = NameSpace.get;
+							if(match.params)i--;//'.b' -> '(.)b'
+							match = simple;
+							{
+								yield match;
+								context.list.push(match);
+								//++i;
+								isFirst = false;
+								continue;
+							}
+						}
+						//parsing full 'a.b' pattern
+						//gets the 'a' part
+						let match_arg = context.list.pop();
+						if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
+						match_arg.parent = match;
+						match.list.push(match_arg);
+					}
+					if(match.pattern == "::"){//get left arg match for 'r :: a'
 						//prevent '(:: ... )' or ', :: ...'
 						if(isFirst){//if no 'r' argument '(::)' is parsed as a label
 							const simple = new Simple ({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
@@ -876,143 +919,148 @@ function compile (text,fileName){
 				isFirst=false
 			}
 		}
-		let context = new BracketPattern;
-		[...getPatterns(tree,context)];//mutates context
-		function* forEachTree(context,getTree){//isTree:node->Tree?
-			const tree = getTree(context);
-			for(let i=0;i<tree.length;i++){
-				let [v,a] = [tree[i],context];
-				yield [v,i,a];
-				yield*forEachTree(v,getTree);
+		//extra functions for getAssignments
+			let context = new BracketPattern;
+			function filterTree(v,i,tree){
+				return typeof v[0]!="string"||!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/);
 			}
-		}
-		const forEachPattern = ()=>forEachTree(context,v=>v?.list??[]);
-		function addRefParam(match,match_parents,param){
-			//match:Pattern
-			//match_parents:Set(BracketPattern)
-			//param:Param
-			let higherParamParent = param.owner;//:Pattern
-			let argParentIndex;
-			//assume: there is not an infinite chain of Pattern.parent's
-			if(param.owner.type=="function"||param instanceof Operator)return;//functions can't form ref loops, since it is garantied that `match_parents.includes(param.owner) == true`
-			while(
-				higherParamParent
-				&& -1 == (argParentIndex = match_parents.indexOf(higherParamParent.parent))
-			){higherParamParent = higherParamParent?.parent};
-			if(argParentIndex==-1){
-				throw Error("compiler error");
+			[...getPatterns(tree,context)];//mutates context
+			function* forEachTree(context,getTree){//isTree:node->Tree?
+				const tree = getTree(context);
+				for(let i=0;i<tree.length;i++){
+					let [v,a] = [tree[i],context];
+					yield [v,i,a];
+					yield*forEachTree(v,getTree);
+				}
 			}
-			if(!higherParamParent)throw Error("compiler error");
-			let higherArgParent = match_parents[argParentIndex-1];
-			if(argParentIndex==0){//e.g. '(a a=2)'
-				//UNTESTED: unknown behaviour: may not reference errors, where there should be
-				return;
+			const forEachPattern = ()=>forEachTree(context,v=>v?.list??[]);
+			function addRefParam(match,match_parents,param){
+				//match:Pattern
+				//match_parents:Set(BracketPattern)
+				//param:Param
+				let higherParamParent = param.owner;//:Pattern
+				let argParentIndex;
+				//assume: there is not an infinite chain of Pattern.parent's
+				if(param.owner.type=="function"||param instanceof Operator)return;//functions can't form ref loops, since it is garantied that `match_parents.includes(param.owner) == true`
+				while(
+					higherParamParent
+					&& -1 == (argParentIndex = match_parents.indexOf(higherParamParent.parent))
+				){higherParamParent = higherParamParent?.parent};
+				if(argParentIndex==-1){
+					throw Error("compiler error");
+				}
+				if(!higherParamParent)throw Error("compiler error");
+				let higherArgParent = match_parents[argParentIndex-1];
+				if(argParentIndex==0){//e.g. '(a a=2)'
+					//UNTESTED: unknown behaviour: may not reference errors, where there should be
+					return;
+				}
+				if(!higherArgParent)throw Error("compiler error");
+				if(higherParamParent.parent!=higherArgParent.parent)throw Error("compiler error");
+				{//check for and prevent reference loops
+					if(higherParamParent.refs?.has?.(higherArgParent))match.id.throwError("illegal reference", "recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
+				}
+				//note:
+					//From now on only things from block 'arg' can reference block 'param'
+					//and never the other way around.
+					//Otherwise a reference error is thrown.
+				//----
+				//adds new reference.
+				if(!higherArgParent.refs){
+					higherArgParent.refs=new Set;//:Set(Pattern)
+					higherArgParent.refLevel??=(higherParamParent.refLevel??-1)+1;
+					higherParamParent.refLevel??=higherArgParent.refLevel-1;
+				}
+				if(higherArgParent.refLevel<=higherParamParent.refLevel)match.id.throwError("illegal reference", "complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
+				higherArgParent.refs.add(higherParamParent);
 			}
-			if(!higherArgParent)throw Error("compiler error");
-			if(higherParamParent.parent!=higherArgParent.parent)throw Error("compiler error");
-			{//check for and prevent reference loops
-				if(higherParamParent.refs?.has?.(higherArgParent))match.id.throwError("illegal reference", "recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
+			function getParam(name,parent,parents=[]){//parents:Pattern[]?
+				let param = 
+					parent?.currentLabels?.get?.(name)
+					??(p=>parents.includes(p?.owner)?undefined:p)(parent?.startLabels?.get?.(name))
+				;
+				parents?.push?.(parent);
+				return param?
+					{param,parents}:
+					parent.parent?
+						getParam(name,parent.parent,parents)
+						:undefined
+				;
 			}
-			//note:
-				//From now on only things from block 'arg' can reference block 'param'
-				//and never the other way around.
-				//Otherwise a reference error is thrown.
-			//----
-			//adds new reference.
-			if(!higherArgParent.refs){
-				higherArgParent.refs=new Set;//:Set(Pattern)
-				higherArgParent.refLevel??=(higherParamParent.refLevel??-1)+1;
-				higherParamParent.refLevel??=higherArgParent.refLevel-1;
+			class Operator extends Param{
+				constructor(name,priority,foo,length=2){
+					//assume this.name[1] is not used
+					super({name:[name,undefined],priority,owner:context,value:foo});
+					this.value.operatorParamObj = this;//:truthy
+					this.length = length;
+				}
+				isParsed=false;
+				//name:[String,Number]
+				//index:Number
+				//owner:Pattern
+				//value:Lazy
+				//priority:Number
+				//length:Number
 			}
-			if(higherArgParent.refLevel<=higherParamParent.refLevel)match.id.throwError("illegal reference", "complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
-			higherArgParent.refs.add(higherParamParent);
-		}
-		function getParam(name,parent,parents=[]){//parents:Pattern[]?
-			let param = 
-				parent?.currentLabels?.get?.(name)
-				??(p=>parents.includes(p?.owner)?undefined:p)(parent?.startLabels?.get?.(name))
-			;
-			parents?.push?.(parent);
-			return param?
-				{param,parents}:
-				parent.parent?
-					getParam(name,parent.parent,parents)
-					:undefined
-			;
-		}
-		class Operator extends Param{
-			constructor(name,priority,foo,length=2){
-				//assume this.name[1] is not used
-				super({name:[name,undefined],priority,owner:context,value:foo});
-				this.value.operatorParamObj = this;//:truthy
-				this.length = length;
+			let maxPriority;
+			{
+				//applies to Patterns with type = "operator"
+				context.value = new Lazy;
+				const bool_true = new class True extends Lambda{}(new Lambda(1));
+				const bool_false = new class False extends Lambda{}(new Lambda(0));//new Int(0);
+				const equality = (a,b)=>//(Exp,Exp)-> Lambda bool
+					(a=a.eval())==(b=b.eval())?bool_true
+					:a instanceof Array?
+						!(b instanceof Array)?bool_false
+						:!(a.constructor == b.constructor)?bool_false
+						:a.length != b.length?bool_false
+						:a.reduce((s,v,i)=>s==bool_false?s:equality(a[i],b[i]),bool_true)
+					:b instanceof Array?equality(b,a)
+					:+a==+b?bool_true//assume: NaN!=NaN
+					:bool_false
+				;
+				let i=0;
+				context.startLabels= new Map([
+					["!" ,  i,new Lambda(0,bool_false,bool_true)],//new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
+					["~" ,  i,new Calc((a)=>~a),1],
+					["++",  i,new Calc((a)=>a+1,new MultiArgLambdaFunc(([a,f,x],c,s)=>f.call(a.call(f,c,s).call(x,c,s),c,s),3)),1],
+					["--",  i,new Calc((a)=>a-1),1],
+					["&" ,++i,new Calc((a,b)=>a&b),2],
+					["|" ,  i,new Calc((a,b)=>a|b),2],
+					["^" ,  i,new Calc((a,b)=>a^b),2],
+					["%" ,  i,new Calc((a,b)=>a%b),2],
+					["**",  i,new Calc((a,b)=>a**b,new MultiArgLambdaFunc(([a,b],context,stack)=>b.call(a,context,stack),2)),2],
+					["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],c,s)=>a.call(b.call(f,c,s),c,s),3)),2],
+					["/" ,  i,new Calc((a,b)=>a/b),2],
+					["+" ,++i,new Calc((a,b)=>a+b,new MultiArgLambdaFunc(([a,b,f,x],c,s)=>a.call(f,c,s).call(b.call(f,c,s).call(x,c,s),c,s),4)),2],
+					["-" ,  i,new Calc((a,b)=>a-b),2],
+					["==",++i,new ArrowFunc(a=>new ArrowFunc(b=>equality(a,b))),2],
+					["<" ,  i,new Calc((a,b)=>a<b?bool_true:bool_false)],
+					[">" ,  i,new Calc((a,b)=>a>b?bool_true:bool_false)],
+					[">=",  i,new Calc((a,b)=>a>=b?bool_true:bool_false)],
+					["<=",  i,new Calc((a,b)=>a<=b?bool_true:bool_false)],
+					["&&",++i,new Lambda(new Lambda(1,0,1)),2],
+					["||",  i,new Lambda(new Lambda(1,1,0)),2],
+					["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
+				].map(v=>[
+					[
+						files.addInbuilt(v[2],v[0]),
+						v[2][0]instanceof Lambda?files.addInbuilt(v[2][0],v[0]):undefined,//add ID's to the `Lambda(Lambda())` operators
+						v[2].name=v[0],
+						v[2] instanceof Calc &&v[2].fallBackExp!=undefined?files.addInbuilt(v[2].fallBackExp,v[0]):undefined,
+						v=new Operator(...v),
+					][4].name[0],
+					v
+				]));
+				let name = "Infinity";
+				context.startLabels.set(name,new Param({name:[name,undefined],owner:new BracketPattern({parent:context}),value:RecurSetter.forever}));
+				maxPriority= i;
 			}
-			isParsed=false;
-			//name:[String,Number]
-			//index:Number
-			//owner:Pattern
-			//value:Lazy
-			//priority:Number
-			//length:Number
-		}
-		let maxPriority;
-		{
-			//applies to Patterns with type = "operator"
-			context.value = new Lazy;
-			const bool_true = new class True extends Lambda{}(new Lambda(1));
-			const bool_false = new class False extends Lambda{}(new Lambda(0));//new Int(0);
-			const equality = (a,b)=>//(Exp,Exp)-> Lambda bool
-				(a=a.eval())==(b=b.eval())?bool_true
-				:a instanceof Array?
-					!(b instanceof Array)?bool_false
-					:!(a.constructor == b.constructor)?bool_false
-					:a.length != b.length?bool_false
-					:a.reduce((s,v,i)=>s==bool_false?s:equality(a[i],b[i]),bool_true)
-				:b instanceof Array?equality(b,a)
-				:+a==+b?bool_true//assume: NaN!=NaN
-				:bool_false
-			;
-			let i=0;
-			context.startLabels= new Map([
-				["!" ,  i,new Lambda(0,bool_false,bool_true)],//new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
-				["~" ,  i,new Calc((a)=>~a),1],
-				["++",  i,new Calc((a)=>a+1,new MultiArgLambdaFunc(([a,f,x],c,s)=>f.call(a.call(f,c,s).call(x,c,s),c,s),3)),1],
-				["--",  i,new Calc((a)=>a-1),1],
-				["&" ,++i,new Calc((a,b)=>a&b),2],
-				["|" ,  i,new Calc((a,b)=>a|b),2],
-				["^" ,  i,new Calc((a,b)=>a^b),2],
-				["%" ,  i,new Calc((a,b)=>a%b),2],
-				["**",  i,new Calc((a,b)=>a**b,new MultiArgLambdaFunc(([a,b],context,stack)=>b.call(a,context,stack),2)),2],
-				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],c,s)=>a.call(b.call(f,c,s),c,s),3)),2],
-				["/" ,  i,new Calc((a,b)=>a/b),2],
-				["+" ,++i,new Calc((a,b)=>a+b,new MultiArgLambdaFunc(([a,b,f,x],c,s)=>a.call(f,c,s).call(b.call(f,c,s).call(x,c,s),c,s),4)),2],
-				["-" ,  i,new Calc((a,b)=>a-b),2],
-				["==",++i,new ArrowFunc(a=>new ArrowFunc(b=>equality(a,b))),2],
-				["<" ,  i,new Calc((a,b)=>a<b?bool_true:bool_false)],
-				[">" ,  i,new Calc((a,b)=>a>b?bool_true:bool_false)],
-				[">=",  i,new Calc((a,b)=>a>=b?bool_true:bool_false)],
-				["<=",  i,new Calc((a,b)=>a<=b?bool_true:bool_false)],
-				["&&",++i,new Lambda(new Lambda(1,0,1)),2],
-				["||",  i,new Lambda(new Lambda(1,1,0)),2],
-				["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
-			].map(v=>[
-				[
-					files.addInbuilt(v[2],v[0]),
-					v[2][0]instanceof Lambda?files.addInbuilt(v[2][0],v[0]):undefined,//add ID's to the `Lambda(Lambda())` operators
-					v[2].name=v[0],
-					v[2] instanceof Calc &&v[2].fallBackExp!=undefined?files.addInbuilt(v[2].fallBackExp,v[0]):undefined,
-					v=new Operator(...v),
-				][4].name[0],
-				v
-			]));
-			let name = "Infinity";
-			context.startLabels.set(name,new Param({name:[name,undefined],owner:new BracketPattern({parent:context}),value:RecurSetter.forever}));
-			maxPriority= i;
-		}
-		function parseNumber(word){
-			let base = word[1]=="b"?2:word[1]=="x"?16:10;
-			return !isNaN(+word)?+word:(([a,b])=>+a+b/base**b.length)(word.split("."));
-		}
+			function parseNumber(word){
+				let base = word[1]=="b"?2:word[1]=="x"?16:10;
+				return !isNaN(+word)?+word:(([a,b])=>+a+b/base**b.length)(word.split("."));
+			}
+		//----
 		//mutates context
 		(function getAssignments(){
 			//find definisions
@@ -1043,14 +1091,18 @@ function compile (text,fileName){
 						param.value = match.value;
 					}
 				}
-				else if(match.type == "recursion"){
-					match.value = new RecurSetter();
-					match.funcLevel++;
-				}
 				else if(match.type == "function"){//assume pre-fix
 					if(match.pattern==">")match.startLabels = new Map(match.params.map(v=>[v.name[0],v]));
 					match.funcLevel++;
 					match.value = new Lambda
+				}
+				else if(match.type == "recursion"){
+					match.value = new RecurSetter();
+					match.funcLevel++;
+				}
+				else if(match.pattern == "."){
+					match.value = [NameSpace.dot];
+					//will add the other 2 arguments for the dot operater later
 				}
 				else if(match.pattern == "()="){//with/use
 					match.value = bracketParent.value;
@@ -1070,6 +1122,7 @@ function compile (text,fileName){
 					match.value.id = match.id;
 				}
 			}
+			//assert:'a.b' -> '(. a b)'
 			//find and link references
 			for(let [match,i,bracketParent] of forEachPattern()){
 				let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
@@ -1116,14 +1169,15 @@ function compile (text,fileName){
 							if(param.owner.type == "function"){
 								let refLevel = match.funcLevel-param.owner.funcLevel;
 								if(param.owner.options[0]=="{"){//is multi assign namespace
-									match.value = new Lazy(NameSpace.dot,new String(param.name[0]),refLevel);
+									match.value = [NameSpace.get,refLevel,new StringExp(param.name[0])];
 								}
 								else if(param.owner.options[0]=="["){//is multi assign list
-									match.value = new Lazy(List.get,refLevel,new Int(param.index));
+									match.value = [List.get,refLevel,new Int(param.index)];
 								}
 								else{
 									match.value = refLevel;
 								}
+								match.value.id = match.id;
 							}
 							else if(param.owner.type == "assignment"){
 								const paramValue = param.value;
@@ -1145,10 +1199,21 @@ function compile (text,fileName){
 					match.parent.value.push(match.value);
 				}
 			}
-			//find recursion patterns 'r :: a'
+			//finds recursion pattern 'r' in 'r :: a'. Also parses 'a.b' where b is a label
 			for(let [match,i,bracketParent] of forEachPattern()){
 				if(match.pattern=="::"){
 					match.value.recur = Object.assign(new Lazy(match.value.shift()),{id:match.list[0].id});
+				}
+				else if(match.pattern=="." && match.list){
+					let [word,id] = match.params[0];
+					if(match.options == "number"){
+						match.value[0] = List.get;
+						match.push(Object.assign(new Int(parseNumber(word)),{id}))
+					}
+					else if(match.options == "property"){
+						//assume: match.value[0] == NameSpace.get
+						match.push(Object.assign(new StringExp(word),{id}));
+					}
 				}
 			}
 			//remove empty commas caused by assignments e.g. '(a=1,b=2,a)' -> '(a=1,(b=2),(a))' -> '(()(a))' -> '(a)'
@@ -1161,6 +1226,8 @@ function compile (text,fileName){
 						}
 				}
 			}
+			//assume: there will be no more empty Expressions
+
 			//handle operator priorities
 			for(let [match,i] of 
 				function*(){
@@ -1260,29 +1327,8 @@ tryCatch(()=>{//λ
 	let s = new Stack;
 	compile(`
 		log>eval>(
-			log(
-				a = list "a"false"b"false"c"true,//"b"false"c",
-				b = list 1 2 3 (),
-				eval(get a 0)
-			),
-			Y = f>(a>a a)x>f(x x),
-			list = arg>(Y f>list>bool>(
-				bool list
-				arg>(
-					f tail>list bool>
-						bool
-							arg
-							tail
-				) 
-			),list>bool>bool arg list),
-			true = λλ$1,
-			false = λλ$0,
-			push = item> list>tail>list (bool>bool item tail),
-			unshift = item> list>tail>bool>bool item (list tail),
-			end = a>(a>b>a a,a>b>a a),
-			concat = *,
-			pop_n = list>index>index (list>list λλ$0) list,
-			get = list>index>pop_n (list "???") index λλ$1,
+			a = ["a" "b" "c"],
+			log ({length}>length,a),
 		)
 	`)
 	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval(stack)),v][1]))
