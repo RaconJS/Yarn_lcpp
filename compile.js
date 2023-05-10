@@ -122,7 +122,7 @@ const TEST = false;
 				while(ans.length==1 && this.isReducable(ans[0]))ans=ans[0];//assume: ans is Tree
 				//ans:Lazy|Array
 				if(ans.length == 0)
-					if(1)throw Error("compiler error: all null values should be delt with at compile time")
+					if(1)throw Error("compiler error: all null values should be delt with at compile time");
 					else return Lambda.null;
 			}
 			const context = this.context;
@@ -541,7 +541,7 @@ const TEST = false;
 		}
 		call(arg,context,stack){
 			if(arg instanceof StringExp)return new StringExp(this+arg);
-			else return new List.concat.call(this,context,stack).call(arg,context,stack);
+			else return List.concat.call(this,context,stack).call(arg,context,stack);
 		}
 	}
 	//const Y = new Lambda(new Lambda(0,0),new Lambda(new Lambda(2,0),[0,0]));
@@ -790,6 +790,7 @@ function compile (text,fileName){
 				params = [];
 				if(getWord(tree,i)=="."){//'.1' '.b' or '. exp'
 					pattern = ".";
+					type = "property";
 					++i;
 					if(word = getWord(tree,i).match(numberRegex)){
 						params = [tree[i]];
@@ -824,11 +825,12 @@ function compile (text,fileName){
 		function* getPatterns(tree,bracketContext){
 			let context = bracketContext;
 			let word;
-			let isFirst=true;
+			let isFirst=true;//marks the start of a list e.g. ',' or '('. Is used to sepparate certain patterns.
 			tree = tree.filter(filterTree);
 			for(let i=0;i<tree.length;){
 				word = getWord(tree,i);
 				let match = match_pattern(tree,i);
+				if(context.pattern == "." && context.params?.[0])isFirst=false;//'.b'
 				if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression
 					context=context.parent;
 				}
@@ -836,7 +838,7 @@ function compile (text,fileName){
 					({i}=match);
 					if(match.pattern == "."){//'a.b'
 						//prevent '(. b)' or ', . b' from evaling to '()'
-						if(isFirst||context.pattern=="."){//if no 'a' or 'b' argument '(.)' is parsed as a label
+						if(isFirst){//if no 'a' or 'b' argument '(.)' is parsed as a label
 							//'a . . b' -> '(. a (.))b'
 							const simple = new Simple({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
 							simple.value = NameSpace.get;
@@ -855,6 +857,7 @@ function compile (text,fileName){
 						let match_arg = context.list.pop();
 						if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
 						match_arg.parent = match;
+						//match_arg.isFirst = true;
 						match.list.push(match_arg);
 					}
 					if(match.pattern == "::"){//get left arg match for 'r :: a'
@@ -1062,7 +1065,8 @@ function compile (text,fileName){
 			}
 		//----
 		//mutates context
-		(function getAssignments(){
+		passes:{
+			//getAssignments:
 			//find definisions
 			for(let [match,i,bracketParent] of forEachPattern()){
 				match.funcLevel = match.parent?.funcLevel || 0;
@@ -1101,8 +1105,7 @@ function compile (text,fileName){
 					match.funcLevel++;
 				}
 				else if(match.pattern == "."){
-					match.value = [NameSpace.dot];
-					//will add the other 2 arguments for the dot operater later
+					match.value = [NameSpace.get];//args are added in the next pass
 				}
 				else if(match.pattern == "()="){//with/use
 					match.value = bracketParent.value;
@@ -1123,7 +1126,6 @@ function compile (text,fileName){
 				}
 			}
 			//assert:'a.b' -> '(. a b)'
-			//find and link references
 			for(let [match,i,bracketParent] of forEachPattern()){
 				let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 				if(match.pattern == "="){//assignment
@@ -1145,7 +1147,7 @@ function compile (text,fileName){
 						}
 					}
 					else{
-						match.value = undefined;
+						//match.value may be defined if it's a '(.)'
 						let {param,parents} = getParam(match.arg,match.parent)??{};
 						if(match.type=="number"){
 							if(!param){//if not overwritten && is number literal '1'
@@ -1195,24 +1197,29 @@ function compile (text,fileName){
 				else if(match.type=="recursion"){
 					match.parent.value.push(match.value);
 				}
+				else if(match.pattern == "."){
+					match.parent.value.push(match.value);
+					//will add the other 2 arguments for the dot operater in the next iteration of this loop.
+				}
 				else if(match instanceof BracketPattern){
 					match.parent.value.push(match.value);
 				}
 			}
+			
 			//finds recursion pattern 'r' in 'r :: a'. Also parses 'a.b' where b is a label
 			for(let [match,i,bracketParent] of forEachPattern()){
 				if(match.pattern=="::"){
 					match.value.recur = Object.assign(new Lazy(match.value.shift()),{id:match.list[0].id});
 				}
-				else if(match.pattern=="." && match.list){
-					let [word,id] = match.params[0];
+				else if(match.pattern=="." && match.params?.length==1){
+					let [word,id] = match.params[0].name;
 					if(match.options == "number"){
 						match.value[0] = List.get;
-						match.push(Object.assign(new Int(parseNumber(word)),{id}))
+						match.value.push(Object.assign(new Int(parseNumber(word)),{id}))
 					}
 					else if(match.options == "property"){
 						//assume: match.value[0] == NameSpace.get
-						match.push(Object.assign(new StringExp(word),{id}));
+						match.value.push(Object.assign(new StringExp(word),{id}));
 					}
 				}
 			}
@@ -1281,7 +1288,18 @@ function compile (text,fileName){
 				}
 			}
 			if(context.value.length==0)context.value.push(Lambda.null);//
-		}());
+			//check for the empty expression compiler error
+			context.value.forEach(function forEach(v,i,a){
+				if(v instanceof RecurSetter)forEach(v.recur);
+				if(v instanceof Reference)forEach(v.value);
+				if(v instanceof NameSpace)v.labels.forEach(v.value);
+				if(v instanceof Array){
+					if(v.length == 0)throw Error("compiler error:"+console.log(v,i));
+					v.forEach(forEach);
+				}
+			})
+		};
+
 		return context;
 	}
 	let regex =/\s+|\/\/.*|\/\*[\s\S]*\*\/|λ|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"(?:[^"]|\\[\s\S])*"|'(?:[^"]|\\[\s\S])*'|`(?:[^"]|\\[\s\S])*`|::|(?:[!%^&*-+~<>])=|([+\-*&|^=><])\1?|[^\s]/g;
@@ -1328,7 +1346,7 @@ tryCatch(()=>{//λ
 	compile(`
 		log>eval>(
 			a = ["a" "b" "c"],
-			log ({length}>length,a),
+			log a.length //([1 . 2 . 3])
 		)
 	`)
 	.call(new ArrowFunc((v,c,stack)=>[loga(v.eval(stack)),v][1]))
