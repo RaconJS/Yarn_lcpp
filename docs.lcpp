@@ -537,14 +537,23 @@
 //operators:
 	//symbols
 		+ - * / ** %
+		++ --
 		& | ~ ^ >> << >>>
-		>= !=
+		>= != <=
 		! 
 		&& || ^^
 		<- -> (<->)
 		(>) (<) (=) (==)
 	//note that the raw, normal functions can be obtained by putting symbols in brackets on their own.
-		//this can be done to use symbols such as '>' as an operator instead of a lambda declaration
+		//This may be done to use symbols such as '>' as an operator instead of a lambda declaration.
+		//This may also be done to use operaters as normal functions
+		//e.g.
+			add = a>b> (a (++) b)
+			//is not the same as
+			not_add = a>b> (a ((++) b))
+			pow_increment = a>b> (a ++b)//(b+1)**a
+			//is the same as
+			same_pow_increment = a>b> (a (++b))
 	//Operators are special type of variable since they can be used for infix operations
 	//Different operators have different priorities for when they are evaluated.
 	//These operators are evaluated before any function calls
@@ -553,7 +562,7 @@
 		//e.g.
 			//polyfill for 'add'
 			//note this code wouldn't work as self references for '(+)', can't be done directly.
-			+ = [floatA floatB]>(
+			+ = floatA> floatB>(
 				a = floatA,
 				b = floatB,
 				a == () (b == () (+)(b > (+) [a b])) 
