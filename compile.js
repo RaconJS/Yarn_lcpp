@@ -123,6 +123,7 @@ const TEST = false;
 		class Lazy extends Exp_Array{//:Exp ; lazy evaluation
 			//Lazy : Exp[]
 			context;//:Context
+			labels;//:Map(string=>Reference)? ; if this exists then namespace-like labels are added to the expressiong when evaluated.
 			constructor(...exps){
 				//if(exps.includes(undefined))throw Error("compiler error");
 				super(exps.length);
@@ -134,7 +135,7 @@ const TEST = false;
 				else return this.eval(stack).call(arg,this.context,stack);
 			}//(a>a)(a>a a)
 			isReducable(exp){//returns to if exp.eval() != exp
-				return exp instanceof Lazy || exp.constructor==Array;
+				return (exp instanceof Lazy && !exp.labels) || exp.constructor==Array;
 			}
 			eval(stack=new Stack()){
 				let ans = this;
@@ -179,6 +180,13 @@ const TEST = false;
 				);
 				//optimise for next time.
 				if(this.length>1)this.splice(0,this.length,ans);
+				if(this.labels){
+					let newLabels = new Map();
+					for(let [v,i] of this.labels){
+						newLabels.set(i,new Lazy(v).eval(stack));
+					}
+					ans = Object.assign(new NameSpace(newLabels,ans),{id:ans.id});
+				}
 				return ans;
 			}
 			evalFully(stack=new Stack()){
@@ -768,6 +776,7 @@ const TEST = false;
 				class Pattern_extra{
 					startLabels;//:Map(String,Ref)
 					currentLabels;//:Map(String,Ref)
+					publicLabels;//:Map(String,Ref)?
 					refs;//:Set(Pattern) & Tree(Pattern)
 					refLevel;//:Number
 					funcLevel;//:Number ; number of nested lambdas
@@ -1109,6 +1118,21 @@ const TEST = false;
 							:{param}
 					;
 				}
+				function checkParam(param){
+					if(!param){
+						if(param===null)match.id.throwError("reference", "label: '"+match.arg+"' is undefined at this point. A direct self reference may of been attempted. Self referenceing is not allowed.",a=>Error(a));
+						else match.id.throwError("reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
+					}
+				}
+				function handleMultiAssign(value,param){
+					if(param.owner.options[0]=="{"){//is multi assign namespace
+						return [NameSpace.get,value,new StringExp(param.name[0])];
+					}
+					else if(param.owner.options[0]=="["){//is multi assign list
+						return [List.get,value,new Int(param.index)];
+					}
+					else return value;
+				}
 				class Operator extends Param{
 					constructor(name,priority,foo,length=2){
 						//assume this.name[1] is not used
@@ -1231,6 +1255,7 @@ const TEST = false;
 						match.value = [NameSpace.get];//args are added in the next pass
 					}
 					else if(match.pattern == "()="){//with/use
+						//UNFINISHED: with/use is not fully implemented
 						match.value = bracketParent.value;
 					}
 					else if(match instanceof BracketPattern){
@@ -1249,11 +1274,17 @@ const TEST = false;
 					}
 				}
 				//assert:'a.b' -> '(. a b)'
+				//find and link references
 				for(let [match,i,bracketParent] of forEachPattern()){
 					let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 					if(match.pattern == "="){//assignment
+						const isPublic = !!match.options.match("<");
 						for(let param of match.params){
 							match.parent.currentLabels.set(param.name[0],param);
+							if(isPublic){
+								if(!bracketParent.value.labels)bracketParent.value.labels = new Map();
+								bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
+							}
 						}
 					}
 					else if(match.type == "function"){//function
@@ -1285,30 +1316,19 @@ const TEST = false;
 							}
 							if(match.value == undefined) {
 								//note: number literals & other predefined values can be used as either an Int or a parameter reference
-								if(!param){
-									if(param===null)match.id.throwError("reference", "label: '"+match.arg+"' is undefined at this point. A direct self reference may of been attempted. Self referenceing is not allowed.",a=>Error(a));
-									else match.id.throwError("reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
-								}
+								checkParam(param)
 								addRefParam(match,parents,param);
 								//assert: param != undefined
 								match.ref = param;
 								if(param.owner.type == "function"){
 									let refLevel = match.funcLevel-param.owner.funcLevel;
-									if(param.owner.options[0]=="{"){//is multi assign namespace
-										match.value = [NameSpace.get,refLevel,new StringExp(param.name[0])];
-									}
-									else if(param.owner.options[0]=="["){//is multi assign list
-										match.value = [List.get,refLevel,new Int(param.index)];
-									}
-									else{
-										match.value = refLevel;
-									}
+									match.value = handleMultiAssign(refLevel,param);
 									match.value.id = match.id;
 								}
 								else if(param.owner.type == "assignment"){
 									const paramValue = param.value;
 									const levelDif = match.funcLevel-param.owner.funcLevel;
-									match.value = new Reference(paramValue,levelDif,match.id);
+									match.value = handleMultiAssign(new Reference(paramValue,levelDif,match.id),param);
 								}
 								else{
 									match.value = param.value;
@@ -1400,6 +1420,7 @@ const TEST = false;
 						let index = match.parent.value.indexOf(match.value);
 						if(match.value.length == 1 || index == 0){
 							match.parent.value.splice(index,1,...match.value);
+							match.list.forEach(v=>v.parent=match.parent);
 						}
 					}
 				}
@@ -1418,7 +1439,7 @@ const TEST = false;
 					if(v instanceof Reference)forEach(v.value);
 					if(v instanceof NameSpace)v.labels.forEach(v.value);
 					if(v instanceof Array){
-						if(v.length == 0)throw Error("compiler error:"+console.log(v,i));
+						if(v.length == 0 && !v.labels)throw Error("compiler error:"+console.log(v,i));
 						v.forEach(forEach);
 					}
 				})
@@ -1470,7 +1491,7 @@ tryCatch(()=>{//λ
 	compile(`
 		{log evalFully eval toJS}>(
 			a = [1 2 3],
-			log 2,
+			log (),
 			log = a>log a 1,
 		)
 	`)
