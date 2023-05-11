@@ -704,7 +704,7 @@
 		[a b] = [1 3].map [v]>f>x>f(v f x),
 //using & with '( )>' '( )=':
 	//using '( )>' :
-		//UPDATE using blocks are no longer functions
+		//this pattern takes in a list of label refences on the left and an expression on the right.
 		//This pattern does not change how the code functions, only allows for performance gains and can throw errors from undefined labels.
 		//These contain a scope on the right side of the '( )>' expression
 		//"using" blocks can not use any parameters or labels defined outside them.
