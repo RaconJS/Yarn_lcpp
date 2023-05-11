@@ -1203,14 +1203,17 @@ const TEST = false;
 								if(property instanceof Float && !(nameSpace instanceof NameSpace)){
 									property = +property;
 									if(nameSpace instanceof List){
-										let newList = Object.assign(new List(...nameSpace),{id:this.id});
+										let newList = Object.assign(new List(...nameSpace),{id:assign_id});
 										if(!isNaN(property)&&Math.abs(property)!=Infinity&&property>=0)newList[property|0] = value;
 										return newList;
 									}
 								}
 								else if(property instanceof StringExp){
 									property = ""+property;
-									if(!(nameSpace instanceof NameSpace))return new NameSpace(new Map([[property,value]]),nameSpace,this.id)
+									if(!(nameSpace instanceof NameSpace))return new NameSpace(new Map([[property,value]]),nameSpace,assign_id);
+									let newObj = new NameSpace(new Map(nameSpace.labels),nameSpace.exp,assign_id);
+									newObj.labels.set(property,value);
+									return newObj;
 								}
 							}
 						},2)]
@@ -1300,7 +1303,8 @@ const TEST = false;
 				for(let [match,i,bracketParent] of forEachPattern()){
 					let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 					if(match.pattern == "="){//assignment
-						const isPublic = !!match.options.match("<"), isCode = !!match.options.match(">");
+						const isPublic = !!match.options.includes("<");
+						const isCode = !!match.options.includes(">");
 						for(let param of match.params){
 							match.parent.currentLabels.set(param.name[0],param);
 							if(isPublic){
@@ -1339,7 +1343,7 @@ const TEST = false;
 							}
 							if(match.value == undefined) {
 								//note: number literals & other predefined values can be used as either an Int or a parameter reference
-								checkParam(param)
+								checkParam(param,match)
 								addRefParam(match,parents,param);
 								//assert: param != undefined
 								match.ref = param;
