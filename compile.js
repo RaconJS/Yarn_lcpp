@@ -834,7 +834,7 @@ const TEST = false;
 				let id = tree[i][1];
 				let pattern = "";
 				let options="";//'()=' '()<=>'
-				let params=[];//:Tree|[String,Number][]
+				let params=[];//:Tree|Param[]|[String,Number][]
 				let hasOwnContext=false;
 				let type="operator";
 				let oldI=i;
@@ -880,7 +880,7 @@ const TEST = false;
 					if(options.includes("(")&&pattern){//()> or ()=
 						if(pattern==">"){pattern = "()>";type = "use"}
 						else {pattern = "()=";type = "with";}
-						
+						hasOwnContext = true;
 					}
 				}
 				if(!pattern){
@@ -957,7 +957,7 @@ const TEST = false;
 				for(let i=0;i<tree.length;){
 					word = getWord(tree,i);
 					let match = match_pattern(tree,i);
-					if(match.pattern=="()>")match.usingLabels = match.params.map(v=>v[0]);//:Map(string,Param)
+					if(match.pattern=="()>")match.usingLabels = match.params.map(v=>v.name[0]);//:Map(string,Param)
 					if(context.pattern == "." && context.params?.[0])isFirst=false;//'.b'
 					if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression
 						context=context.parent;
@@ -1105,27 +1105,34 @@ const TEST = false;
 					if(higherArgParent.refLevel<=higherParamParent.refLevel)match.id.throwError("illegal reference", "complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
 					higherArgParent.refs.add(higherParamParent);
 				}
-				function getParam(name,parent,parents=[]){//parents:Pattern[]?
+				function getParam(name,parent,parents=[],stopAtUseBlocks=false){//parents:Pattern[]?
 					//param == null -> was found, but it was a self reference
 					//param == undefined -> not found at all
 					//param == NaN -> not found, caught bty 'use' block
 					const checkForSelfRef = p=>p?parents.includes(p?.owner)?null:p:undefined;
-					if(1){}if(parent.pattern == "()>"){//using-block
-						//parent.usingLabels:string[]
-						let param=parent.usingLabels.includes(name);
-						if(!param)return undefined;
+					if(!stopAtUseBlocks){
+						parents?.push?.(parent);
+						if(parent.type == "use"){//'()>'
+							//parent.usingLabels:string[]
+							let param=parent.usingLabels.includes(name);
+							if(!param){
+								if(getParam(name,parent,[...parents],true)?.param)param = NaN;
+								else param = undefined;
+								return {param,parents};
+							}
+						}
+						else if(parent.type == "with"){//'()='
+							//parent.usingLabels:Mapparent.[]
+							let param=parent.usingLabels.get(name);
+							if(!param)return undefined;
+							else return {param,parents};
+						}
 					}
-					else if(parent.pattern == "()="){
-						//parent.usingLabels:Mapparent.[]
-						let param=parent.usingLabels.get(name);
-						if(!param)return undefined;
-						else return {param,parents};
-					}
-					parents?.push?.(parent);
 					let param = 
 						checkForSelfRef(parent?.currentLabels?.get?.(name))
 						??checkForSelfRef(parent?.startLabels?.get?.(name))
 					;
+					parents?.push?.(parent);
 					return param?
 						{param,parents}:
 						parent.parent?
@@ -1133,9 +1140,12 @@ const TEST = false;
 							:{param}
 					;
 				}
-				function checkParam(param,match){
-					if(!param){
+				function checkParam(param,match,parents){
+					if(!param){//param:undefined|null|NaN
 						if(param===null)match.id.throwError("reference", "label: '"+match.arg+"' is undefined at this point. A direct self reference may of been attempted. Self referenceing is not allowed.",a=>Error(a));
+						if(param!==param)match.id.throwError("reference", "label: '"+match.arg+"' is undefined inside local use-block '( ... ) >'\n"+
+							parents.pop().id.displayWordInLine("caught here")
+						,a=>Error(a));
 						else match.id.throwError("reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
 					}
 				}
@@ -1285,7 +1295,7 @@ const TEST = false;
 					else if(match.type == "function"){//assume pre-fix
 						if(match.pattern==">")match.startLabels = new Map(match.params.map(v=>[v.name[0],v]));
 						match.funcLevel++;
-						match.value = new Lambda
+						match.value = new Lambda;
 					}
 					else if(match.type == "recursion"){
 						match.value = new RecurSetter();
@@ -1294,9 +1304,13 @@ const TEST = false;
 					else if(match.pattern == "."){
 						match.value = [NameSpace.get];//args are added in the next pass
 					}
-					else if(match.pattern == "()="){//with/use
+					else if(match.pattern == "()="){//with_block
 						//UNFINISHED: with/use is not fully implemented
 						match.value = bracketParent.value;
+					}
+					else if(match.pattern == "()>"){//use_block
+						//UNFINISHED: with/use is not fully implemented
+						match.value = new Lazy;
 					}
 					else if(match instanceof BracketPattern){
 						if(match.pattern=="()" || match.pattern == ","){
@@ -1358,7 +1372,7 @@ const TEST = false;
 							}
 							if(match.value == undefined) {
 								//note: number literals & other predefined values can be used as either an Int or a parameter reference
-								checkParam(param,match)
+								checkParam(param,match,parents)
 								addRefParam(match,parents,param);
 								//assert: param != undefined
 								match.ref = param;
@@ -1533,6 +1547,7 @@ tryCatch(()=>{//λ
 	compile(`
 		{log evalFully eval toJS}>(
 			a = [1 2 3],
+			(b)>b,
 			log => a>log a 1,
 			(a<=>2),
 		)
