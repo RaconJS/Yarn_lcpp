@@ -137,11 +137,12 @@ const TEST = false;
 			isTypeReducable(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
 				return (exp instanceof Lazy || exp.constructor==Array);
 			}
+			isReducable(exp){return this.isTypeReducable(exp)&&!exp.labels}
 			eval(stack=new Stack()){
 				let ans = this;
 				{
 					//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
-					while(ans.length==1 && this.isTypeReducable(ans[0]) && !ans[0].labels)ans=ans[0];//assume: ans is Tree
+					while(ans.length==1 && this.isReducable(ans[0]))ans=ans[0];//assume: ans is Tree
 					//ans:Lazy|Array
 					if(ans.length == 0)
 						if(1)throw Error("compiler error: all null values should be delt with at compile time");
@@ -412,7 +413,7 @@ const TEST = false;
 				toJS(){return this.func}
 			}
 		class NameSpace extends Exp{//'{a b c}' and '{a<=1,b<=2,c<=3}'
-			constructor(labels,exp){//labels:Map(string,Exp)|JSON-like object
+			constructor(labels,exp,id){//labels:Map(string,Exp)|JSON-like object
 				super();
 				if(!(labels instanceof Map)){
 					this.labels=new Map();
@@ -1165,6 +1166,7 @@ const TEST = false;
 						:bool_false
 					;
 					let i=0;
+					const assign_id = new FilelessWordData({word:"="});
 					context.startLabels= new Map([
 						["!" ,  i,new Lambda(0,bool_false,bool_true)],//new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
 						["~" ,  i,new Calc((a)=>~a),1],
@@ -1191,6 +1193,27 @@ const TEST = false;
 						["&&",++i,new Lambda(new Lambda(1,0,1)),2],
 						["||",  i,new Lambda(new Lambda(1,1,0)),2],
 						["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
+						["=" ,  i,new MultiArgLambdaFunc(function([nameSpace,property,value],context,stack){
+							if(Lazy.prototype.isReducable(property) )property = property.eval(stack);
+							if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
+							if(Lazy.prototype.isReducable(nameSpace))nameSpace = nameSpace.eval(stack);
+							if(Lazy.prototype.isReducable(nameSpace)||Lazy.prototype.isReducable(property))
+								return Object.assign(new Lazy(this,nameSpace.eval(stack),property.eval(stack)),{context,id:assign_id});
+							else {
+								if(property instanceof Float && !(nameSpace instanceof NameSpace)){
+									property = +property;
+									if(nameSpace instanceof List){
+										let newList = Object.assign(new List(...nameSpace),{id:this.id});
+										if(!isNaN(property)&&Math.abs(property)!=Infinity&&property>=0)newList[property|0] = value;
+										return newList;
+									}
+								}
+								else if(property instanceof StringExp){
+									property = ""+property;
+									if(!(nameSpace instanceof NameSpace))return new NameSpace(new Map([[property,value]]),nameSpace,this.id)
+								}
+							}
+						},2)]
 					].map(v=>[
 						[
 							files.addInbuilt(v[2],v[0]),
