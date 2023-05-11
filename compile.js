@@ -134,14 +134,14 @@ const TEST = false;
 				if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
 				else return this.eval(stack).call(arg,this.context,stack);
 			}//(a>a)(a>a a)
-			isReducable(exp){//returns to if exp.eval() != exp
-				return (exp instanceof Lazy && !exp.labels) || exp.constructor==Array;
+			isTypeReducable(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
+				return (exp instanceof Lazy || exp.constructor==Array);
 			}
 			eval(stack=new Stack()){
 				let ans = this;
 				{
 					//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
-					while(ans.length==1 && this.isReducable(ans[0]))ans=ans[0];//assume: ans is Tree
+					while(ans.length==1 && this.isTypeReducable(ans[0]) && !ans[0].labels)ans=ans[0];//assume: ans is Tree
 					//ans:Lazy|Array
 					if(ans.length == 0)
 						if(1)throw Error("compiler error: all null values should be delt with at compile time");
@@ -166,7 +166,7 @@ const TEST = false;
 					v instanceof Exp_Array||
 					v instanceof Exp_String||
 					v instanceof Exp_Number?v:
-					v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id}):
+					v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id,labels:v.labels}):
 					/*v instanceof Object?(v=>{
 						let labels=new Map();
 						for(let i in v){
@@ -182,7 +182,7 @@ const TEST = false;
 				if(this.length>1)this.splice(0,this.length,ans);
 				if(this.labels){
 					let newLabels = new Map();
-					for(let [v,i] of this.labels){
+					for(let [i,v] of this.labels){
 						newLabels.set(i,new Lazy(v).eval(stack));
 					}
 					ans = Object.assign(new NameSpace(newLabels,ans),{id:ans.id});
@@ -432,7 +432,7 @@ const TEST = false;
 			}
 			toJS(){
 				let newObj = {};
-				for(let [v,i] of this.labels){
+				for(let [i,v] of this.labels){
 					newObj[i]=v.toJS?.()??v;
 				}
 				return newObj;
@@ -661,7 +661,7 @@ const TEST = false;
 			},2),
 			window:window?new NameSpace(window,Lambda.null):Lambda.null,
 		});
-		for(let [v,i] of JSintervace.labels)
+		for(let [i,v] of JSintervace.labels)
 			if(v!=Lambda.null)v.id = new FilelessWordData({word:"SOURCE: JS intervace: "+i});
 		{//old unued code
 			//const Y = new Lambda(new Lambda(0,0),new Lambda(new Lambda(2,0),[0,0]));
@@ -837,22 +837,6 @@ const TEST = false;
 				let type="operator";
 				let oldI=i;
 				if(!pattern){
-					let word = getWord(tree,i);
-					if(word=="<"){ //'< a' or '< a $ n'
-						++i;
-						if(getWord(tree,i).match(/\w+/)){
-							pattern = "<";
-							type = "return";
-							params = [tree[i]];
-							++i;
-						}
-						if(getWord(tree,i)){
-							++i;
-						}
-					}
-					//if(getWord(tree,i+1)=="::"){} UNFINISHED
-				}
-				if(!pattern){
 					hasOwnContext=true;
 					options="";
 					if(getWord(tree,i)=="?"){options+="?";++i}
@@ -888,14 +872,29 @@ const TEST = false;
 					if(getWord(tree,i)=="?"){options+="?";++i}
 					if(getWord(tree,i)==">"){options+=pattern=">";id=getID(tree,i);++i;type="function";}
 					else {
-						if(getWord(tree,i)=="<"){options+="<";++i}
-						if(getWord(tree,i)=="="){options+=pattern="=";id=getID(tree,i);++i;type="assignment";}
-						if(getWord(tree,i)==">"){options+=">";++i}
+						word = getWord(tree,i);
+						if(word.match(/<?=>?/)){options+=word;pattern="=";id=getID(tree,i);type="assignment";++i;}
 					}
 					if(options.includes("(")&&pattern){//()> or ()=
 						pattern = "()=";//use and with blocks are counted as with blocks
 						type = "with";//{">"}[options.match(/(?<=\)).*$/)];
 					}
+				}
+				if(!pattern){
+					let word = getWord(tree,i);
+					if(word=="<"){ //'< a' or '< a $ n'
+						++i;
+						if(getWord(tree,i).match(/\w+/)){
+							pattern = "<";
+							type = "return";
+							params = [tree[i]];
+							++i;
+						}
+						if(getWord(tree,i)){
+							++i;
+						}
+					}
+					//if(getWord(tree,i+1)=="::"){} UNFINISHED
 				}
 				if(!pattern){//set recur
 					hasOwnContext=false;
@@ -1278,7 +1277,7 @@ const TEST = false;
 				for(let [match,i,bracketParent] of forEachPattern()){
 					let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 					if(match.pattern == "="){//assignment
-						const isPublic = !!match.options.match("<");
+						const isPublic = !!match.options.match("<"), isCode = !!match.options.match(">");
 						for(let param of match.params){
 							match.parent.currentLabels.set(param.name[0],param);
 							if(isPublic){
@@ -1286,6 +1285,7 @@ const TEST = false;
 								bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
 							}
 						}
+						if(isCode)match.parent.value.push(Object.assign(match.params.map(v=>new Reference(v.value,0,v.id)),{id:match.id}));
 					}
 					else if(match.type == "function"){//function
 						match.parent.value.push(match.value);
@@ -1426,10 +1426,10 @@ const TEST = false;
 				}
 				//parse null values and simplify expressions: '()' -> `Lambda.null`
 				for(let [match,i,bracketParent] of forEachPattern()){
-					if(Lazy.prototype.isReducable(match.value)&& match.value.length==0){
+					if(Lazy.prototype.isTypeReducable(match.value)&& match.value.length==0){
 						let index = match.parent.value.indexOf(match.value);
 						if(index!=-1)//may of already been removed ealier
-						match.parent.value.splice(index,1,Lambda.null);
+							match.value.labels?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
 					}
 				}
 				if(context.value.length==0)context.value.push(Lambda.null);//
@@ -1447,7 +1447,7 @@ const TEST = false;
 
 			return context;
 		}
-		let regex =/\s+|\/\/.*|\/\*[\s\S]*\*\/|λ|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"(?:[^"]|\\[\s\S])*"|'(?:[^"]|\\[\s\S])*'|`(?:[^"]|\\[\s\S])*`|::|(?:[!%^&*-+~<>])=|([+\-*&|^=><])\1?|[^\s]/g;
+		let regex =/\s+|\/\/.*|\/\*[\s\S]*\*\/|λ|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"(?:[^"]|\\[\s\S])*"|'(?:[^"]|\\[\s\S])*'|`(?:[^"]|\\[\s\S])*`|::|<=>|(?:[!%^&*-+~<>])=|=>|([+\-*&|^=><])\1?|[^\s]/g;
 		let lines = text.split("\n");
 		const words = text.match(regex)??[];
 		const file = new files.FileData({text,words,lines});
@@ -1491,8 +1491,8 @@ tryCatch(()=>{//λ
 	compile(`
 		{log evalFully eval toJS}>(
 			a = [1 2 3],
-			log (),
-			log = a>log a 1,
+			log => a>log a 1,
+			(a<=>2),
 		)
 	`)
 	.call(JSintervace)
