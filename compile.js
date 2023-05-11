@@ -755,6 +755,7 @@ const TEST = false;
 						options;//:?String & joined words
 						params;//:?(String & word) | Tree<String>
 						list;
+						usingLabels;//:?string[] if '()>'|Map(String,Param) if '()=>'; for '()>' and '()=>'
 				}
 				class Simple extends Pattern{
 					constructor(data){super();Object.assign(this,data)}
@@ -874,11 +875,12 @@ const TEST = false;
 					if(getWord(tree,i)==">"){options+=pattern=">";id=getID(tree,i);++i;type="function";}
 					else {
 						word = getWord(tree,i);
-						if(word.match(/<?=>?/)){options+=word;pattern="=";id=getID(tree,i);type="assignment";++i;}
+						if(word.match(/^<?=>?$/)){options+=word;pattern="=";id=getID(tree,i);type="assignment";++i;}
 					}
 					if(options.includes("(")&&pattern){//()> or ()=
-						pattern = "()=";//use and with blocks are counted as with blocks
-						type = "with";//{">"}[options.match(/(?<=\)).*$/)];
+						if(pattern==">"){pattern = "()>";type = "use"}
+						else {pattern = "()=";type = "with";}
+						
 					}
 				}
 				if(!pattern){
@@ -955,6 +957,7 @@ const TEST = false;
 				for(let i=0;i<tree.length;){
 					word = getWord(tree,i);
 					let match = match_pattern(tree,i);
+					if(match.pattern=="()>")match.usingLabels = match.params.map(v=>v[0]);//:Map(string,Param)
 					if(context.pattern == "." && context.params?.[0])isFirst=false;//'.b'
 					if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression
 						context=context.parent;
@@ -1105,12 +1108,24 @@ const TEST = false;
 				function getParam(name,parent,parents=[]){//parents:Pattern[]?
 					//param == null -> was found, but it was a self reference
 					//param == undefined -> not found at all
+					//param == NaN -> not found, caught bty 'use' block
 					const checkForSelfRef = p=>p?parents.includes(p?.owner)?null:p:undefined;
+					if(1){}if(parent.pattern == "()>"){//using-block
+						//parent.usingLabels:string[]
+						let param=parent.usingLabels.includes(name);
+						if(!param)return undefined;
+					}
+					else if(parent.pattern == "()="){
+						//parent.usingLabels:Mapparent.[]
+						let param=parent.usingLabels.get(name);
+						if(!param)return undefined;
+						else return {param,parents};
+					}
+					parents?.push?.(parent);
 					let param = 
 						checkForSelfRef(parent?.currentLabels?.get?.(name))
 						??checkForSelfRef(parent?.startLabels?.get?.(name))
 					;
-					parents?.push?.(parent);
 					return param?
 						{param,parents}:
 						parent.parent?
@@ -1118,7 +1133,7 @@ const TEST = false;
 							:{param}
 					;
 				}
-				function checkParam(param){
+				function checkParam(param,match){
 					if(!param){
 						if(param===null)match.id.throwError("reference", "label: '"+match.arg+"' is undefined at this point. A direct self reference may of been attempted. Self referenceing is not allowed.",a=>Error(a));
 						else match.id.throwError("reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
