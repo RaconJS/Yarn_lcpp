@@ -447,6 +447,9 @@ const TEST = false;
 				}
 				else if(!(property instanceof StringExp))return Lambda.null;
 				let propertyStr = ""+property;
+				if(!obj[Exp.symbol]){
+					return Exp.fromJS(obj[propertyStr]);
+				}
 				if(obj instanceof NameSpace){
 					let ans = obj.labels.get(propertyStr);
 					if(ans)return ans;
@@ -850,7 +853,7 @@ const TEST = false;
 					hasOwnContext=true;
 					{//assign params
 						if("([{".includes(getWord(tree,i)||undefined)){
-							options+=getWord(tree,i)+"..."+getWord(tree,i+2);
+							options+=getWord(tree,i)+"..."+getWord(tree,i+2);//"(...)"
 							let forEachSyntaxTree=tree=>(foo,s0)=>{
 								let s = s0;
 								return function traverse(foo,tree){
@@ -878,8 +881,8 @@ const TEST = false;
 						if(word.match(/^<?=>?$/)){options+=word;pattern="=";id=getID(tree,i);type="assignment";++i;}
 					}
 					if(options.includes("(")&&pattern){//()> or ()=
-						if(pattern==">"){pattern = "()>";type = "use"}
-						else {pattern = "()=";type = "with";}
+						if(pattern==">"){pattern = "()>";type = "use";}
+						else pattern = "";//else {pattern = "()=";type = "with";}
 						hasOwnContext = true;
 					}
 				}
@@ -1023,9 +1026,25 @@ const TEST = false;
 						++i;
 						let bracket=new BracketPattern({pattern:{"(":"()", "[":"[]", "{":"{}"}[word],list:[],parent:context,isFirst,id});
 						yield bracket;
-						context.list.push(bracket);
+						let withPattern = (word=getWord(tree,i+2))?.match?.(/<?=>?/);//:bool|Pattern?
+						if(withPattern){//with statement
+							//()=, ()=>, ()<=, ()<=>
+							//withPattern.options: "=" | "=>" | "<=" "<=>"
+							//withPattern.list: ['(...)=' , '()=...']
+							withPattern = new Pattern({pattern:"()=",options:word,type:"with",list:[bracket],parent:context,isFirst,id:getID(tree,i)});
+							bracket.isFirst = true;
+							bracket.parent = withPattern;
+							context.list.push(withPattern);
+						}
+						else context.list.push(bracket);
 						yield*getPatterns(tree[i],bracket);
 						++i;
+						if(withPattern){
+							context = withPattern;
+							i+=2;
+							isFirst = true;
+							continue;
+						}
 					}
 					else if(")]}".includes(word)){
 						return;
@@ -1110,7 +1129,7 @@ const TEST = false;
 					//param == undefined -> not found at all
 					//param == NaN -> not found, caught bty 'use' block
 					const checkForSelfRef = p=>p?parents.includes(p?.owner)?null:p:undefined;
-					if(!stopAtUseBlocks){
+					if(!stopAtUseBlocks&&(parent.type=="use"||parent.type=="with")){
 						parents?.push?.(parent);
 						if(parent.type == "use"){//'()>'
 							//parent.usingLabels:string[]
@@ -1306,7 +1325,8 @@ const TEST = false;
 					}
 					else if(match.pattern == "()="){//with_block
 						//UNFINISHED: with/use is not fully implemented
-						match.value = bracketParent.value;
+						match.value = new Lazy;
+						throw Error("compiler error: with blocks are not supported yet");
 					}
 					else if(match.pattern == "()>"){//use_block
 						//UNFINISHED: with/use is not fully implemented
@@ -1547,8 +1567,8 @@ tryCatch(()=>{//λ
 	compile(`
 		{log evalFully eval toJS}>(
 			a = [1 2 3],
-			(b)>b,
-			log => a>log a 1,
+			(b)=>b,b=1,
+			log => a>log (toJS a) 1,
 			(a<=>2),
 		)
 	`)
