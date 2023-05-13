@@ -757,6 +757,7 @@ const TEST = false;
 						pattern;//:?String & word
 						options;//:?String & joined words
 						params;//:?(String & word) | Tree<String>
+						publicLabels;//:?Param[]
 						list;
 						usingLabels;//:?string[] if '()>'|Map(String,Param) if '()=>'; for '()>' and '()=>'
 				}
@@ -1026,22 +1027,25 @@ const TEST = false;
 						++i;
 						let bracket=new BracketPattern({pattern:{"(":"()", "[":"[]", "{":"{}"}[word],list:[],parent:context,isFirst,id});
 						yield bracket;
-						let withPattern = (word=getWord(tree,i+2))?.match?.(/<?=>?/);//:bool|Pattern?
-						if(withPattern){//with statement
+						let withBlock_pattern = (word=getWord(tree,i+2))?.match?.(/<?=>?/);//:bool|Pattern?
+						if(withBlock_pattern){//with statement
 							//()=, ()=>, ()<=, ()<=>
-							//withPattern.options: "=" | "=>" | "<=" "<=>"
-							//withPattern.list: ['(...)=' , '()=...']
-							withPattern = new Pattern({pattern:"()=",options:word,type:"with",list:[bracket],parent:context,isFirst,id:getID(tree,i)});
+							//withBlock_pattern.options: "=" | "=>" | "<=" "<=>"
+							//withBlock_pattern.list: ['(...)=' , '()=...']
+							withBlock_pattern = new Pattern({pattern:"()=",options:word,type:"with",list:[bracket],parent:context,isFirst,id:getID(tree,i),publicLabels:new Map});
+							if(word.match(">"))withBlock_pattern.usingLabels = new Map;
 							bracket.isFirst = true;
-							bracket.parent = withPattern;
-							context.list.push(withPattern);
+							bracket.parent = withBlock_pattern;
+							context.list.push(withBlock_pattern);
 						}
 						else context.list.push(bracket);
 						yield*getPatterns(tree[i],bracket);
 						++i;
-						if(withPattern){
-							context = withPattern;
-							i+=2;
+						if(withBlock_pattern){//'()='
+							++i;
+							context = new BracketPattern({pattern:",",list:[],parent:withBlock_pattern,id:getID(tree,i),isFirst:true});
+							withBlock_pattern.list.push(context);
+							++i;
 							isFirst = true;
 							continue;
 						}
@@ -1086,8 +1090,9 @@ const TEST = false;
 				const forEachPattern = ()=>forEachTree(context,v=>v?.list??[]);
 				function addRefParam(match,match_parents,param){
 					//match:Pattern
-					//match_parents:Set(BracketPattern)
+					//match_parents:Set(BracketPattern)?
 					//param:Param
+					if(!match_parents)return;//assert: if param came from a with statement, it is impossible for it to cause a reference-loop.
 					let higherParamParent = param.owner;//:Pattern
 					let argParentIndex;
 					//assume: there is not an infinite chain of Pattern.parent's
@@ -1135,23 +1140,25 @@ const TEST = false;
 							//parent.usingLabels:string[]
 							let param=parent.usingLabels.includes(name);
 							if(!param){
+								//stops the param search from passing through the 'use block' filter
 								if(getParam(name,parent,[...parents],true)?.param)param = NaN;
 								else param = undefined;
 								return {param,parents};
 							}
 						}
-						else if(parent.type == "with"){//'()='
+						else if(parent.type == "with" && parent.usingLabels){//'()=>' or '()<=>'
 							//parent.usingLabels:Mapparent.[]
 							let param=parent.usingLabels.get(name);
 							if(!param)return undefined;
-							else return {param,parents};
 						}
 					}
+					parents?.push?.(parent);
 					let param = 
+						parent.type=="with"?parent.publicLabels.get(name):
 						checkForSelfRef(parent?.currentLabels?.get?.(name))
 						??checkForSelfRef(parent?.startLabels?.get?.(name))
 					;
-					parents?.push?.(parent);
+					if(parent.type=="with"&&param)parents=undefined;
 					return param?
 						{param,parents}:
 						parent.parent?
@@ -1287,8 +1294,14 @@ const TEST = false;
 				for(let [match,i,bracketParent] of forEachPattern()){
 					match.funcLevel = match.parent?.funcLevel || 0;
 					if(match.parent.pattern == "::" && i==0)match.funcLevel--; //'r' does use the inner '::' context
-					let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
 					if(match.pattern == "="){//assignment
+						const isPublic = !!match.options.includes("<");
+						if(isPublic){
+							for(let param of match.params){
+								if(!bracketParent.value.labels)bracketParent.value.labels = new Map();
+								bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
+							}
+						}
 						if(bracketParent.pattern==","){
 							{//set up assignment properties
 								bracketParent.startLabels ??= new Map();//String|Number => Param
@@ -1325,8 +1338,8 @@ const TEST = false;
 					}
 					else if(match.pattern == "()="){//with_block
 						//UNFINISHED: with/use is not fully implemented
+						if(match.options.includes(">"))match.usingLabels = new Map;//:Map(string,Param) ; for with_use patterns '()=>' and '()<=>'
 						match.value = new Lazy;
-						throw Error("compiler error: with blocks are not supported yet");
 					}
 					else if(match.pattern == "()>"){//use_block
 						//UNFINISHED: with/use is not fully implemented
@@ -1350,15 +1363,34 @@ const TEST = false;
 				//assert:'a.b' -> '(. a b)'
 				//find and link references
 				for(let [match,i,bracketParent] of forEachPattern()){
-					let lastValue = match.isFirst?undefined:bracketParent[i-1];// ','
+					function setPublicLabel(parent,param){
+						while(parent.parent&&(parent instanceof BracketPattern || [","].includes(parent?.pattern))){
+							parent = parent.parent;
+						}
+						//assert: parent.type is "assignment" | "with"
+						if(!parent.publicLabels)parent.publicLabels = new Map;
+						let name = param.name[0];
+						//assume:parent.publicLabels and parent.usingLabels is only assigned inside here
+						//assume:parent.usingLabels == parent.publicLabels?
+						let isValid = !!function checkLabels(param,parent){//:bool ; checks that the with-block's param's are valid.
+							//UNFINISHED
+							return true;
+						}(param,parent);
+						if(isValid){
+							parent.publicLabels.set(name,param);
+							if(parent.type == "with" && parent.usingLabels){//'()=>' or '()<=>' with&use block
+								parent.usingLabels.set(name,param);
+							}
+						}
+					};
 					if(match.pattern == "="){//assignment
 						const isPublic = !!match.options.includes("<");
 						const isCode = !!match.options.includes(">");
 						for(let param of match.params){
 							match.parent.currentLabels.set(param.name[0],param);
 							if(isPublic){
-								if(!bracketParent.value.labels)bracketParent.value.labels = new Map();
 								bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
+								setPublicLabel(match.parent,param);
 							}
 						}
 						if(isCode)match.parent.value.push(Object.assign(match.params.map(v=>new Reference(v.value,0,v.id)),{id:match.id}));
@@ -1392,7 +1424,7 @@ const TEST = false;
 							}
 							if(match.value == undefined) {
 								//note: number literals & other predefined values can be used as either an Int or a parameter reference
-								checkParam(param,match,parents)
+								checkParam(param,match,parents);
 								addRefParam(match,parents,param);
 								//assert: param != undefined
 								match.ref = param;
@@ -1411,6 +1443,7 @@ const TEST = false;
 								}
 								if(match.value==undefined)throw Error("compiler error");
 							}
+							if(match.value instanceof NameSpace)setPublicLabel(match.parent,param);
 						}
 						match.parent.value.push(match.value);
 					}
@@ -1421,9 +1454,14 @@ const TEST = false;
 						match.parent.value.push(match.value);
 						//will add the other 2 arguments for the dot operater in the next iteration of this loop.
 					}
+					else if(match.type == "with"){
+						//assume: match.list = [labels:BracketPattern,code:BracketPattern]
+						match.parent.value.push(match.list[1].value);
+					}
 					else if(match instanceof BracketPattern){
 						match.parent.value.push(match.value);
 					}
+					else throw Error("compiler error: haven't enumerated all possibilities");
 				}
 				
 				//finds recursion pattern 'r' in 'r :: a'. Also parses 'a.b' where b is a label
@@ -1523,7 +1561,7 @@ const TEST = false;
 
 			return context;
 		}
-		let regex =/\s+|\/\/.*|\/\*[\s\S]*\*\/|λ|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"(?:[^"]|\\[\s\S])*"|'(?:[^"]|\\[\s\S])*'|`(?:[^"]|\\[\s\S])*`|::|<=>|(?:[!%^&*-+~<>])=|=>|([+\-*&|^=><])\1?|[^\s]/g;
+		let regex =/\s+|\/\/.*|\/\*[\s\S]*\*\/|λ|\b(?:[0-9]+(?:\.[0-9]*)?|0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|0b[01]+(?:\.[01]*)?)\b|\b\w+\b|"(?:[^"]|\\[\s\S])*"|'(?:[^"]|\\[\s\S])*'|`(?:[^"]|\\[\s\S])*`|::|<=>|[!%^&*-+~<>]=|=>|([+\-*&|^=><])\1?|[^\s]/g;
 		let lines = text.split("\n");
 		const words = text.match(regex)??[];
 		const file = new files.FileData({text,words,lines});
@@ -1564,14 +1602,14 @@ const TEST = false;
 }
 //bug: 'a = b = 1' -> null error
 tryCatch(()=>{//λ
-	compile(`
-		{log evalFully eval toJS}>(
+	loga(compile(`
+		(w)=a,a=,w=,
+		/*{log evalFully eval toJS}>(
 			a = [1 2 3],
-			(b)=>b,b=1,
 			log => a>log (toJS a) 1,
 			(a<=>2),
-		)
-	`)
-	.call(JSintervace)
+		)*/
+	`).value)
+	//.call(JSintervace)
 	//.evalFully()
 });
