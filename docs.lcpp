@@ -1,12 +1,12 @@
 //NEED_UPDATE UNFINISHED
 //comments '//' '/**/' :
-	//same as in the programming language called 'C'
-	//comment
+	//Comments word the same as in the programming language called 'C'
+	//single-line comment
 	/*
-		multiline
+		multi-line
 		comment
 	*/
-//white space is not used as syntax except for separating sertain symbols.
+//white space is not used as syntax except for separating sertain words symbols. White space is also not ignored in "strings"
 //keywords & symbols :
 	( @ ) > \ λ $ :: < = , == === => <= . <=> { } ¬ [ ] # ; " " : ?
 //blocks
@@ -177,12 +177,12 @@
 		//e.g.
 			0x123
 			0b1101
-	//They can be use\d as church numerals, (which can be used for iteration)
+	//They can be used as church numerals, (which can be used for iteration)
 	//It is possible to convert regular lambda functions to Integers.
 		//This may be desirable since integers run faster:
 			//They don't take up as must stack space, since they use iterasion instead of recursion.
 			//and can have inbuilt optimisations
-	//Integers is it's own data type although they are meant to look like normal lambda functions.
+	//Integer is its own data type, although they are meant to also look and act like normal lambda functions.
 	//regular lambda functions can be converted into integers by taking advantage of the recursion system.
 	//e.g.
 		(bool>bool 1 bool>bool 2 bool>bool 3)
@@ -331,7 +331,7 @@
 		//Labels cannot reference themselves in their definision.
 			//e.g.
 			(a = a) //ERROR 'a' is not defined
-			//Instead, Y_ish combinator can be used for self referencing.
+			//Instead, a Y combinator can be used for self referencing.
 		//Note that the 'a =' pattern is ignored from the final code, and so can be put in the middle of lambda expressions without affecting them
 		//Note using multiple 'a =' without ',' is possible:
 			//multiple values can be assigned 
@@ -670,9 +670,9 @@
 			//can convert array trees or parse strings into assembly syntax trees
 		//group:
 			//e.g.
-			["a" "A" "," "b" "B" "," "c" "C"].group ","// [["a" "A"] "," ["b" "B"] "," ["c" "C"]]
-			//same as
-			("", (@a a,b B,c C).group ",") //
+				["a" "A" "," "b" "B" "," "c" "C"].group ","// [["a" "A"] "," ["b" "B"] "," ["c" "C"]]
+				//same as
+				("", (@a a,b B,c C).group ",") //
 		//split
 		//splice
 		//flat
@@ -680,12 +680,16 @@
 	//pattern '[a b c]>'
 		//e.g.
 			[1 2 3].map [v i]>i v,
+			//is the same as
+			[1 2 3].map a>a.1 a.0,
+			([a b]> a b) [1 2 3],
 	//pattern '{a b c}>'
-		({a}>a a){a=2,b=3}
+		//e.g.
+			({a}>a a) {a=2,b=3}
 	//allows a function to take in parameters from an array or object
 	//This functionality could be done without using this syntax
 		//e.g.
-		[1 2 3].map (a>(v>i>i v)a[0] a[1]),
+			[1 2 3].map (a>(v>i>i v)a[0] a[1]),
 //array/object assignment '[ ]=' '{ }=' :
 	//pattern '[a b] = '
 		//e.g.
