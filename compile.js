@@ -759,6 +759,7 @@ const TEST = false;
 						params;//:?(String & word) | Tree<String>
 						publicLabels;//:?Param[]
 						list;
+						//
 						usingLabels;//:?string[] if '()>'|Map(String,Param) if '()=>'; for '()>' and '()=>'
 				}
 				class Simple extends Pattern{
@@ -780,13 +781,17 @@ const TEST = false;
 					id;//:WordData
 				}
 				class Pattern_extra{
-					startLabels;//:Map(String,Ref)
-					currentLabels;//:Map(String,Ref)
-					publicLabels;//:Map(String,Ref)?
-					refs;//:Set(Pattern) & Tree(Pattern)
+					//BracketPattern
+						startLabels;//:Map(String,Ref)
+						currentLabels;//:Map(String,Ref)
+						publicLabels;//:Map(String,Ref)?
+						refs;//:Set(Pattern) & Tree(Pattern)
 					refLevel;//:Number
 					funcLevel;//:Number ; number of nested lambdas
-					isUsed;//:bool? ; For assignment patterns only. Is true if at least one reference to this label exists.
+					//'='
+						isUsed;//:bool? ; For assignment patterns only. Is true if at least one reference to this label exists.
+					//'()='
+						withBlock_isLeftArg;//:bool? ; 
 				}
 				class Param{
 					constructor(data){Object.assign(this,data)}
@@ -1033,10 +1038,11 @@ const TEST = false;
 							//()=, ()=>, ()<=, ()<=>
 							//withBlock_pattern.options: "=" | "=>" | "<=" "<=>"
 							//withBlock_pattern.list: ['(...)=' , '()=...']
-							withBlock_pattern = new Pattern({pattern:"()=",options:word,type:"with",list:[bracket],parent:context,isFirst,id:getID(tree,i),publicLabels:new Map});
+							withBlock_pattern = new Pattern({pattern:"()=",options:word,type:"with",list:[bracket],parent:context,isFirst,id:getID(tree,i+2),publicLabels:new Map});
 							if(word.match(">"))withBlock_pattern.usingLabels = new Map;
 							bracket.isFirst = true;
 							bracket.parent = withBlock_pattern;
+							bracket.withBlock_isLeftArg = true;
 							context.list.push(withBlock_pattern);
 						}
 						else context.list.push(bracket);
@@ -1131,47 +1137,56 @@ const TEST = false;
 					higherArgParent.refs.add(higherParamParent);
 				}
 				function getParam(name,parent,parents=[],stopAtUseBlocks=false){//parents:Pattern[]?
-					//param == null -> was found, but it was a self reference
-					//param == undefined -> not found at all
-					//param == NaN -> not found, caught bty 'use' block
+					//Errors:
+						//param == null -> was found, but it was a self reference
+						//param == undefined -> not found at all
+						//param == NaN -> not found, caught bty 'use' block
+					//----
 					const checkForSelfRef = p=>p?parents.includes(p?.owner)?null:p:undefined;
-					if(!stopAtUseBlocks&&(parent.type=="use"||parent.type=="with")){
-						parents?.push?.(parent);
+					parents?.push?.(parent);
+					if(!stopAtUseBlocks&&parent.usingLabels&&!parents[parents.length-2]?.withBlock_isLeftArg){
+						//assume: parent.type:"use"|"with"
+						let param;
 						if(parent.type == "use"){//'()>'
 							//parent.usingLabels:string[]
-							let param=parent.usingLabels.includes(name);
-							if(!param){
-								//stops the param search from passing through the 'use block' filter
-								if(getParam(name,parent,[...parents],true)?.param)param = NaN;
-								else param = undefined;
-								return {param,parents};
-							}
+							param=parent.usingLabels.includes(name);
 						}
-						else if(parent.type == "with" && parent.usingLabels){//'()=>' or '()<=>'
-							//parent.usingLabels:Mapparent.[]
-							let param=parent.usingLabels.get(name);
-							if(!param)return undefined;
+						else if(parent.type == "with"){//'()=>' or '()<=>'
+							//parent.usingLabels:Map[]
+							param=parent.usingLabels.get(name);
+						}
+						if(!param){
+							//stops the param search from passing through the 'use block' filter
+							if(getParam(name,parent,[...parents],true)?.param)param = NaN;
+							else param = undefined;
+							return {param,parents};
 						}
 					}
-					parents?.push?.(parent);
 					let param = 
 						parent.type=="with"?parent.publicLabels.get(name):
 						checkForSelfRef(parent?.currentLabels?.get?.(name))
 						??checkForSelfRef(parent?.startLabels?.get?.(name))
 					;
 					if(parent.type=="with"&&param)parents=undefined;
-					return param?
-						{param,parents}:
+					return param?{param,parents}:
 						parent.parent?
 							getParam(name,parent.parent,parents)
-							:{param}
+							:{param,parents}
 					;
 				}
 				function checkParam(param,match,parents){
 					if(!param){//param:undefined|null|NaN
+						let parent = parents[parents.length-1];
 						if(param===null)match.id.throwError("reference", "label: '"+match.arg+"' is undefined at this point. A direct self reference may of been attempted. Self referenceing is not allowed.",a=>Error(a));
-						if(param!==param)match.id.throwError("reference", "label: '"+match.arg+"' is undefined inside local use-block '( ... ) >'\n"+
-							parents.pop().id.displayWordInLine("caught here")
+						else if(param!==param)match.id.throwError("reference", "label: '"+match.arg+"' can not be reached from within  the local "+
+							(match.type=="use"?
+								"use-block '( ... ) > ...'" : parent.options[0]=="<"?
+								"use-with '( ... ) <=> ...'":
+								"use-with '( ... ) => ...'"
+							)+"\n"+
+							"Cannot reference outside values unless they are passed into the block.\n"+
+							//"Try adding '"+match.arg+"' into the '( ... )' part of the block shown bellow.\n"+
+							parent.id.displayWordInLine("caught here")
 						,a=>Error(a));
 						else match.id.throwError("reference", "label: '"+match.arg+"' is undefined",a=>Error(a));
 					}
@@ -1186,9 +1201,10 @@ const TEST = false;
 					else return value;
 				}
 				class Operator extends Param{
+					static owner = new BracketPattern({id:new FilelessWordData({word:"operator"})});
 					constructor(name,priority,foo,length=2){
 						//assume this.name[1] is not used
-						super({name:[name,undefined],priority,owner:context,value:foo});
+						super({name:[name,undefined],priority,owner:Operator.owner,value:foo});
 						this.value.operatorParamObj = this;//:truthy
 						this.length = length;
 					}
@@ -1219,7 +1235,7 @@ const TEST = false;
 					;
 					let i=0;
 					const assign_id = new FilelessWordData({word:"="});
-					context.startLabels= new Map([
+					Operator.owner.startLabels=Operator.owner.publicLabels = new Map([
 						["!" ,  i,new Lambda(0,bool_false,bool_true)],//new ArrowFunc((a,context,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
 						["~" ,  i,new Calc((a)=>~a),1],
 						["++",  i,new Calc((a)=>a+1,new MultiArgLambdaFunc(([a,f,x],c,s)=>f.call(a.call(f,c,s).call(x,c,s),c,s),3)),1],
@@ -1269,16 +1285,16 @@ const TEST = false;
 								}
 							}
 						},2)]
-					].map(v=>[
-						[
-							files.addInbuilt(v[2],v[0]),
-							v[2][0]instanceof Lambda?files.addInbuilt(v[2][0],v[0]):undefined,//add ID's to the `Lambda(Lambda())` operators
-							v[2].name=v[0],
-							v[2] instanceof Calc &&v[2].fallBackExp!=undefined?files.addInbuilt(v[2].fallBackExp,v[0]):undefined,
-							v=new Operator(...v),
-						][4].name[0],
-						v
-					]));
+					].map(v=>{
+						files.addInbuilt(v[2],v[0]);
+						v[2][0]instanceof Lambda?files.addInbuilt(v[2][0],v[0]):undefined;//add ID's to the `Lambda(Lambda())` operators
+						//v[2] = new{[v[0]]:class extends v[2].constructor{}}[v[0]](v[2]);//javascript magic to name the operator classes after the operators themselves.
+						v[2].name=v[0];
+						v[2] instanceof Calc &&v[2].fallBackExp!=undefined?files.addInbuilt(v[2].fallBackExp,v[0]):undefined;
+						v=new Operator(...v);
+						return [v.name[0],v];
+					}));
+					context.startLabels = new Map(Operator.owner.startLabels);
 					let name = "Infinity";
 					context.startLabels.set(name,new Param({name:[name,undefined],owner:new BracketPattern({parent:context}),value:RecurSetter.forever}));
 					maxPriority= i;
@@ -1287,6 +1303,30 @@ const TEST = false;
 					let base = word[1]=="b"?2:word[1]=="x"?16:10;
 					return !isNaN(+word)?+word:(([a,b])=>+a+b/base**b.length)(word.split("."));
 				}
+				function setPublicLabel(parent,param,isStartingLabel=false,isReference){
+					//isReference: true => 'a', false => 'a<='
+					let name = param.name[0];
+					while(parent.parent&&!parent.withBlock_isLeftArg&&(parent instanceof BracketPattern || [","].includes(parent?.pattern))){
+						parent = parent.parent;
+					}
+					//assert: parent.type is "assignment" | "with"
+					if(parent.withBlock_isLeftArg)parent=parent.parent;
+					else if(isReference)return;//stops '(a, a= b<=2)' from parsing to '(b <= 2,a = b<=2)'
+					if(isStartingLabel&&parent.publicLabels?.has?.(name))return;
+					//assume:parent.publicLabels and parent.usingLabels is only assigned inside here
+					//assume:parent.usingLabels == parent.publicLabels?
+					let isValid = !!function checkLabels(param,parent){//:bool ; checks that the with-block's param's are valid.
+						//UNFINISHED
+						return true;
+					}(param,parent);
+					if(isValid){
+						if(!parent.publicLabels)parent.publicLabels = new Map;
+						parent.publicLabels.set(name,param);
+						if(parent.type == "with" && parent.usingLabels){//'()=>' or '()<=>' with&use block
+							parent.usingLabels.set(name,param);
+						}
+					}
+				};
 			//----
 			//mutates context
 			passes:{
@@ -1301,6 +1341,7 @@ const TEST = false;
 							for(let param of match.params){
 								if(!bracketParent.value.labels)bracketParent.value.labels = new Map();
 								bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
+								setPublicLabel(match.parent,param,true);
 							}
 						}
 						if(bracketParent.pattern==","){
@@ -1364,26 +1405,6 @@ const TEST = false;
 				//assert:'a.b' -> '(. a b)'
 				//find and link references. fill in match.value
 				for(let [match,i,bracketParent] of forEachPattern()){
-					function setPublicLabel(parent,param){
-						while(parent.parent&&(parent instanceof BracketPattern || [","].includes(parent?.pattern))){
-							parent = parent.parent;
-						}
-						//assert: parent.type is "assignment" | "with"
-						if(!parent.publicLabels)parent.publicLabels = new Map;
-						let name = param.name[0];
-						//assume:parent.publicLabels and parent.usingLabels is only assigned inside here
-						//assume:parent.usingLabels == parent.publicLabels?
-						let isValid = !!function checkLabels(param,parent){//:bool ; checks that the with-block's param's are valid.
-							//UNFINISHED
-							return true;
-						}(param,parent);
-						if(isValid){
-							parent.publicLabels.set(name,param);
-							if(parent.type == "with" && parent.usingLabels){//'()=>' or '()<=>' with&use block
-								parent.usingLabels.set(name,param);
-							}
-						}
-					};
 					if(match.pattern == "="){//assignment
 						const isPublic = !!match.options.includes("<");
 						const isCode = !!match.options.includes(">");
@@ -1391,16 +1412,13 @@ const TEST = false;
 							match.parent.currentLabels.set(param.name[0],param);
 							if(isPublic){
 								bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
-								setPublicLabel(match.parent,param);
+								setPublicLabel(match.parent,param,false);
 							}
 						}
 						if(isCode){
 							match.parent.value.push(Object.assign(match.params.map(v=>new Reference(v.value,0,v.id)),{id:match.id}));
 							match.isUsed = true;
 						}
-					}
-					else if(match.type == "function"){//function
-						match.parent.value.push(match.value);
 					}
 					else if(match.type == "argument" || match.type == "symbol" || match.type == "number" || match.type == "string"){
 						if(match.pattern == "$"){
@@ -1426,7 +1444,7 @@ const TEST = false;
 									match.value = Object.assign(new StringExp(string),{id:match.id});
 								}
 							}
-							if(match.value == undefined) {
+							if(match.value == undefined) {//not already defined
 								//note: number literals & other predefined values can be used as either an Int or a parameter reference
 								checkParam(param,match,parents);
 								addRefParam(match,parents,param);
@@ -1447,27 +1465,21 @@ const TEST = false;
 									match.value = param.value;
 								}
 								if(match.value==undefined)throw Error("compiler error");
+								//if(match.value instanceof NameSpace)
+								if(param.owner.publicLabels){
+									for(let [i,v] of param.owner.publicLabels)
+										setPublicLabel(match.parent,v,false,true);
+								}
 							}
-							if(match.value instanceof NameSpace)setPublicLabel(match.parent,param);
 						}
 						match.parent.value.push(match.value);
 					}
-					else if(match.type=="recursion"){
+					else if(["function","recursion","property","with","use"].includes(match.type))match.parent.value.push(match.value);
+					else if(match instanceof BracketPattern){//',' '()' '[]' '{}'
+						if(match.parent.type == "with" && match.parent.list[0] == match)continue;
 						match.parent.value.push(match.value);
 					}
-					else if(match.pattern == "."){
-						match.parent.value.push(match.value);
-						//will add the other 2 arguments for the dot operater in the next iteration of this loop.
-					}
-					else if(match.type == "with"){
-						//assume: match.list = [labels:BracketPattern,code:BracketPattern]
-						match.parent.value.push(match.list[1].value);
-						match.list[1].parent=match.parent;
-					}
-					else if(match instanceof BracketPattern){
-						match.parent.value.push(match.value);
-					}
-					else throw Error("compiler error: haven't enumerated all possibilities");
+					else throw Error("compiler error: '"+match.type+"' haven't enumerated all possibilities");
 				}
 				//handle references to null values
 				for(let [match,i,bracketParent] of forEachPattern()){
@@ -1621,7 +1633,7 @@ const TEST = false;
 //bug: 'a = b = 1' -> null error
 tryCatch(()=>{//λ
 	loga(compile(`
-		w,w=,
+		(w +)=>a+,w=(a<=2),1 2
 		/*{log evalFully eval toJS}>(
 			a = [1 2 3],
 			log => a>log (toJS a) 1,
