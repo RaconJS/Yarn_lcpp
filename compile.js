@@ -786,6 +786,7 @@ const TEST = false;
 					refs;//:Set(Pattern) & Tree(Pattern)
 					refLevel;//:Number
 					funcLevel;//:Number ; number of nested lambdas
+					isUsed;//:bool? ; For assignment patterns only. Is true if at least one reference to this label exists.
 				}
 				class Param{
 					constructor(data){Object.assign(this,data)}
@@ -1339,11 +1340,11 @@ const TEST = false;
 					else if(match.pattern == "()="){//with_block
 						//UNFINISHED: with/use is not fully implemented
 						if(match.options.includes(">"))match.usingLabels = new Map;//:Map(string,Param) ; for with_use patterns '()=>' and '()<=>'
-						match.value = new Lazy;
+						match.value = [];//this value isn't used in final code
 					}
 					else if(match.pattern == "()>"){//use_block
 						//UNFINISHED: with/use is not fully implemented
-						match.value = new Lazy;
+						match.value = [];//new Lazy;
 					}
 					else if(match instanceof BracketPattern){
 						if(match.pattern=="()" || match.pattern == ","){
@@ -1457,13 +1458,26 @@ const TEST = false;
 					else if(match.type == "with"){
 						//assume: match.list = [labels:BracketPattern,code:BracketPattern]
 						match.parent.value.push(match.list[1].value);
+						match.list[1].parent=match.parent;
 					}
 					else if(match instanceof BracketPattern){
 						match.parent.value.push(match.value);
 					}
 					else throw Error("compiler error: haven't enumerated all possibilities");
 				}
-				
+				//handle references to null values
+				for(let [match,i,bracketParent] of forEachPattern()){
+					if(match.pattern == "="){
+						if(match.isUsed){
+							if(match.value.length == 0){
+								match.value.push(Lambda.null);
+							}
+						}
+						else{
+							//warning dead code
+						}
+					}
+				}
 				//finds recursion pattern 'r' in 'r :: a'. Also parses 'a.b' where b is a label
 				for(let [match,i,bracketParent] of forEachPattern()){
 					if(match.pattern=="::"){
@@ -1550,10 +1564,10 @@ const TEST = false;
 				//check for the empty expression compiler error
 				context.value.forEach(function forEach(v,i,a){
 					if(v instanceof RecurSetter)forEach(v.recur);
-					if(v instanceof Reference)forEach(v.value);
-					if(v instanceof NameSpace)v.labels.forEach(v.value);
-					if(v instanceof Array){
-						if(v.length == 0 && !v.labels)throw Error("compiler error:"+console.log(v,i));
+					else if(v instanceof Reference)forEach(v.value);
+					else if(v instanceof NameSpace)v.labels.forEach(v.value);
+					else if(v instanceof Array){
+						if(v.length == 0 && !v.labels)throw Error("compiler error: non-nulled empty list found"+(console.log(v,i)??""));
 						v.forEach(forEach);
 					}
 				})
@@ -1603,7 +1617,7 @@ const TEST = false;
 //bug: 'a = b = 1' -> null error
 tryCatch(()=>{//λ
 	loga(compile(`
-		(w)=a,a=,w=,
+		w,w=,
 		/*{log evalFully eval toJS}>(
 			a = [1 2 3],
 			log => a>log (toJS a) 1,
