@@ -1477,6 +1477,14 @@ const TEST = false;
 					else if(["function","recursion","property","with","use"].includes(match.type))match.parent.value.push(match.value);
 					else if(match instanceof BracketPattern){//',' '()' '[]' '{}'
 						if(match.parent.type == "with" && match.parent.list[0] == match)continue;
+						if(match.parent.type == "with"){
+							if(match.parent.options[0]=="<")
+							for(let [i,param] of match.parent.publicLabels){
+								match.parent.parent.value.labels??=new Map();
+								match.parent.parent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
+								setPublicLabel(match.parent.parent,param,false);
+							}
+						};
 						match.parent.value.push(match.value);
 					}
 					else throw Error("compiler error: '"+match.type+"' haven't enumerated all possibilities");
@@ -1632,14 +1640,15 @@ const TEST = false;
 }
 //bug: 'a = b = 1' -> null error
 tryCatch(()=>{//λ
-	loga(compile(`
-		(w +)=>a+,w=(a<=2),1 2
+	compile(`
+		a=(x<=),b=((a)<=>),c=(b)=x,
+		//c=(b)=x,a=(x<=),b=((a)<=>),//Error since b is done after c
 		/*{log evalFully eval toJS}>(
 			a = [1 2 3],
 			log => a>log (toJS a) 1,
 			(a<=>2),
 		)*/
-	`).value)
+	`)
 	//.call(JSintervace)
 	//.evalFully()
 });
