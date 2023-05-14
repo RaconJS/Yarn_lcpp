@@ -760,6 +760,13 @@
 				//e.g.
 					joinObjects = objA>objB> (objB)<=objA
 			//e.g. 
+		//To use operators inside a use statement, they must be parsed into it.
+			//In a '()=>' this can be done by passing in any operator into it.
+				//e.g.
+			//e.g.
+				()>1+2, //reference error: '+' cannot be reached inside the use block.
+				(+)>1+2, //no error
+				(*)=>(a>a)1+2,//no error. returns '(+ 1 2)'
 		//e.g.
 			(add>
 				obj = (a<=1,b<=2,c<=3),
