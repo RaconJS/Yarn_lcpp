@@ -1291,7 +1291,7 @@ const TEST = false;
 			//mutates context
 			passes:{
 				//getAssignments:
-				//find definisions
+				//find definisions & make match.value
 				for(let [match,i,bracketParent] of forEachPattern()){
 					match.funcLevel = match.parent?.funcLevel || 0;
 					if(match.parent.pattern == "::" && i==0)match.funcLevel--; //'r' does use the inner '::' context
@@ -1362,7 +1362,7 @@ const TEST = false;
 					}
 				}
 				//assert:'a.b' -> '(. a b)'
-				//find and link references
+				//find and link references. fill in match.value
 				for(let [match,i,bracketParent] of forEachPattern()){
 					function setPublicLabel(parent,param){
 						while(parent.parent&&(parent instanceof BracketPattern || [","].includes(parent?.pattern))){
@@ -1394,7 +1394,10 @@ const TEST = false;
 								setPublicLabel(match.parent,param);
 							}
 						}
-						if(isCode)match.parent.value.push(Object.assign(match.params.map(v=>new Reference(v.value,0,v.id)),{id:match.id}));
+						if(isCode){
+							match.parent.value.push(Object.assign(match.params.map(v=>new Reference(v.value,0,v.id)),{id:match.id}));
+							match.isUsed = true;
+						}
 					}
 					else if(match.type == "function"){//function
 						match.parent.value.push(match.value);
@@ -1438,6 +1441,7 @@ const TEST = false;
 									const paramValue = param.value;
 									const levelDif = match.funcLevel-param.owner.funcLevel;
 									match.value = handleMultiAssign(new Reference(paramValue,levelDif,match.id),param);
+									param.owner.isUsed = true;
 								}
 								else{
 									match.value = param.value;
