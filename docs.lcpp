@@ -285,22 +285,26 @@
 			//is the same as
 				(foo1> arg1> foo2> arg2> ((a>b>foo1 arg1)(foo2 arg2))
 			//e.g.
-				(a>A>b>B>c>C>a A a,b B b,c C)
+				(a>A>b>B>c>C>(a A a,b B b,c C))
 			//is the same as
-				(a>A>b>B>c>C>(a A a)(b B b)(c C))
+				(a>A>b>B>c>C>((a A a)(b B b)(c C)))
 		//Note: it is pointless to put this on the last expression
 			//e.g.
-				(a> a a ,a)
+				(a> (a a ,a))
 				//is the same as
 				(a> a a (a))
 				//is the same as
 				(a> a a a)
 		//e.g.
-			(a> b> f>x> a, b f x) //add
+			(a> b> f>x> (a, b f x)) //add
 			(a> a a (a, a a) a, a a)
 	//pattern 'a =' :
 		//Similar to haskell, constants can be assigned using the 'a =' pattern, where 'a' is a label for a constant.
-		//Also similar to haskell labels can be used before they are defined
+		//constants are assigned to into their local scope, only ignoring blocks created by ','s.
+			//This is so ','s can be used to have and use multiple assigned values in the same scope.
+			//e.g.
+				(b a b a=(x>x),b=(x>y>y a x))
+		//Also similar to haskell, labels can be used before they are defined
 			//implementation:
 				//'a =' patterns are processed before lambda evaluation.
 				//When referencing a label, the value is looked for:
@@ -308,7 +312,7 @@
 					//Next in the first definision of a label within the same scope.
 					//Finally in the parent scope using the above 2 rules.
 			//e.g.
-				(a a,a=a>a)
+				(a a a=a>a)
 		//errors:
 			//loops of label definitions are not allowed:
 				//e.g.
@@ -787,7 +791,13 @@
 				(obj)<=λ$0 b c,//([a b c]<=[1 2 3],λ$0 b c)
 				(obj)= λ$0 b c,//(λ$0 2 3)
 			),
-		//the two types of blocks can be combined with '( )=>' and '( )<=>'
+		//the two types of blocks can be combined 'use with' '( )=>' and 'use with as public' '( )<=>'
+			//both blocks use the same syntax rules as '( )='
+			//e.g.
+				(a=2,b = {c<=(a>a)},(b)=>c a)//throws an error since a cannot be reached outside the '( )=>' block
+		//note: It may be useful to use both a '( )>' followed by a '()='
+			//e.g.
+				(state)>(state)=
 //type annotations ':' :
 	//using ':' symbol
 	//Can be put a type annotation infront of a pattern to make sure labels and expressions have sertain types.
