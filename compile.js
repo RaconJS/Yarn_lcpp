@@ -761,7 +761,6 @@ const TEST = false;
 				//length:Number
 			}
 		//----
-
 		const globalContext = new BracketPattern;
 		assignGlobal:{
 			//applies to Patterns with type = "operator"
@@ -845,9 +844,7 @@ const TEST = false;
 			maxPriority= i;
 		}
 		function compile(text,fileName){
-			if(typeof text != "string")throw throwError_noLine("basic API", "'compile' requires a string input as the source code.",a=>Error(a));
-			//types
-				//syntax, reference
+			if(typeof text != "string")throw throwError_noLine("basic API", "'compile' requires a string input as the source code.",a=>Error(a))
 			if(fileName=== undefined)fileName=(()=>{
 				for(let [fileName,value] of files.list.entries())
 					if(value.text == text)return fileName;
