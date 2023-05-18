@@ -15,34 +15,65 @@
 {}//object
 
 //patterns :
-	//note I am using '+' like the regex symbol. '+' = 'at least 1'
 	//syntax pattern names:
 		expression
 		longExpression
 		param
 		params
+		multiParam
 		label
-		number
-		string
-		property
+		number//literal
+		string//literal
+		propertyChain
+		2ArgumentOperator
 		type
-	//param
+	//param:
 		//word or symbol with an optional type
 	//params:
 		//a list of param separated by spaces and/or ','s
 		param
 		params param
+	//multiParam:
+		param
+		[ params ]
+		{ params }
+	//2ArgumentOperator:
+		+
+		-
+		*
+		/
+		**
+		%
+		&
+		|
+		^
+		&&
+		||
+		^^
 	//longExpression:
 		 //list of expressions
 		expression
 		longExpression expression
+		//can be stopped by ',' or appropriate ending/starting brackets
+			//e.g.
+			( longExpression )
+			, longExpression
+			longExpression ,
+
 	//label:
 		//a value defined somewhere else
 		//references a parameter or a defined value
-	//property
+	//propertyChain
 		//expression followed be a list of labels
 		expression . label
-		property . label
+		expression . expression
+		propertyChain . label
+		propertyChain . expression
+	//assignment
+		=
+		<=
+		=>
+		<=>
 	//type
 		()
 		[]
@@ -57,25 +88,18 @@
 		type
 		types , type
 	//assignment
-	//expression:
+	//expression (all patterns):
 		label
 		( longExpression )
 		longExpression expression
-		param > longExpression
-		[ params ] > longExpression
-		{ params } > longExpression
-		param :: param > longExpression
-		[ params ] :: param > longExpression
-		{ params } :: param > longExpression
-		param ? > longExpression
-		[ params ] ? > longExpression
-		{ params } ? > longExpression
-		param :: param ? > longExpression
-		[ params ] :: param ? > longExpression
-		{ params } :: param ? > longExpression
+		multiParam > longExpression
+		multiParam :: param > longExpression
+		multiParam ? > longExpression
+		multiParam :: param ? > longExpression
 		λ longExpression
 		\ longExpression
 		? λ longExpression
+		? \ longExpression
 		$ number
 		number
 		expression :: longExpression
@@ -83,22 +107,23 @@
 		longExpression < label
 		longExpression < label $ number
 		property
-		param = longExpression
-		param => longExpression
-		param <= longExpression
-		param <=> longExpression
-		param ? = longExpression
-		param ? => longExpression
-		param ? <= longExpression
-		param ? <=> longExpression
-		property = longExpression
-		property => longExpression
-		property <= longExpression
-		property <=> longExpression
-		property ? = longExpression
-		property ? => longExpression
-		property ? <= longExpression
-		property ? <=> longExpression
+		multiParam = longExpression
+		multiParam => longExpression
+		multiParam <= longExpression
+		multiParam <=> longExpression
+		multiParam . = longExpression
+		multiParam . => longExpression
+		multiParam . <= longExpression
+		multiParam . <=> longExpression
+		multiParam ? = longExpression
+		multiParam ? => longExpression
+		multiParam ? <= longExpression
+		multiParam ? <=> longExpression
+		multiParam ? . = longExpression
+		multiParam ? . => longExpression
+		multiParam ? . <= longExpression
+		multiParam ? . <=> longExpression
+		propertyChain = longExpression
 		longExpression ,
 		, longExpression
 		longExpression , longExpression
@@ -110,6 +135,7 @@
 		()
 		longExpression == expression
 		longExpression === expression
+		expression 2ArgumentOperator expression
 		{}
 		{ longExpression }
 		¬ label
@@ -120,7 +146,6 @@
 		# longExpression
 		( @ longExpression )
 		"string"
-
 
 //lambdas '>' , 'λ' , '(a)' , 'a' :
 	//basic lambda calculus:
@@ -303,7 +328,7 @@
 		//constants are assigned to into their local scope, only ignoring blocks created by ','s.
 			//This is so ','s can be used to have and use multiple assigned values in the same scope.
 			//e.g.
-				(b a b a=(x>x),b=(x>y>y a x))
+				(b a b a=(x>x),b=(x>y>y a))
 		//Also similar to haskell, labels can be used before they are defined
 			//implementation:
 				//'a =' patterns are processed before lambda evaluation.
@@ -399,20 +424,32 @@
 			(a = 2, a)
 	//'.' dot operator
 		//Gets property or index.
-		//patterns '.b' and '.[ ]'
+		//patterns '.b' and '.( )'
 			//- takes in the expression on the left and returns a function that returns.
 			//- If a property does not exist then the empty context '()' is returned.
-			//- 'b' can be a number litteral or a word.
-			//- In the '.[ ]' pattern, the brackets contain a long expression.
+			//- If a literal word is passed used '.b' then the word is turned into a string literal.
+			//- Other than word literals, any short, single expression can be passed as a property in the dot operator.
 		//assigning properties:
 			//When a property is assigned to, the change only applies within the scope.
 			//This prevents side-effects.
+			//e.g.
+				(
+					a = (b<=(c<=1,c1<=2),b1<=2),
+					a.b = 2,
+					a,
+				)
+				//is the same as
+				(
+					a = (b<=(c<=1)),
+					a(c<=1,)
+				)
 		//pattern '.b' or '.2' :
+			//
 			//pseudocode code for dot operator
 				//e.g.
 					(b<=2).b,//returns 2
-					//is the same as the pseudocode
-					(b<=2)¬."b",
+					//is the same as
+					(.) (b<=2) "b",
 					//goes to the pseudocode
 					getProperty (b<=2) "b",
 			//can also be used for indexes
@@ -433,6 +470,7 @@
 			//The code inside '.[ ]' is a normal scope and not an array scope
 				//e.g.
 					[1 2 3 4 5].[2 2]//returns '5' since '(2 2)' == '4'
+	//'. ='
 	//'<=' define public label
 		//e.g.
 			obj = (a<=2),
@@ -710,6 +748,22 @@
 		{a b} =(a<=1,b=2),//b == ()
 	//e.g.
 		[a b] = [1 3].map [v]>f>x>f(v f x),
+//reassignment '.='
+	//UNFINISHED: It is unsertain what symbol should be used for this pattern. '.=' is a good place holder, although it may become part of the final syntax design.
+	//More general version of 'a+=b' in other C-like languages
+	//Similar to the assignment patterns except it calls the right side expression with the left side label.
+		//e.g.
+			(a>b>
+				a .= x > x - b,//r = f>a>b>f b a
+				a + 2
+			)
+			//is the same as
+			(a>b>
+				a = (x > x - b) a,
+			)
+	//This can be done with the other assignment patterns such as: '[ ]=' , '{ }=' , '=>' and '<=>'
+		//e.g.
+		a>b>  [a b].=> [x0 x1]>x0+x1
 //using & with '( )>' '( )=':
 	//using '( )>' :
 		//this pattern takes in a list of label refences on the left and an expression on the right.
