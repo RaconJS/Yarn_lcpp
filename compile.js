@@ -732,10 +732,12 @@ const TEST = false;
 					refs;//:Set(Pattern) & Tree(Pattern)
 				refLevel;//:Number
 				funcLevel;//:Number ; number of nested lambdas
-				//'='
-					isUsed;//:bool? ; For assignment patterns only. Is true if at least one reference to this label exists.
-				//'()='
-					withBlock_isLeftArg;//:bool? ; 
+				//on '=' only
+					isUsed;//:bool ; For assignment patterns only. Is true if at least one reference to this label exists.
+				//on 'a.b=' only
+					firstValue;//:simple|null
+				//on '()=' only
+					withBlock_isLeftArg;//:bool ; 
 			}
 			class Param{
 				constructor(data){Object.assign(this,data)}
@@ -844,7 +846,7 @@ const TEST = false;
 			maxPriority= i;
 		}
 		function compile(text,fileName){
-			if(typeof text != "string")throw throwError_noLine("basic API", "'compile' requires a string input as the source code.",a=>Error(a))
+			if(typeof text != "string")throw throwError_noLine("basic API", "'compile' requires a string input as the source code.",a=>Error(a));
 			if(fileName=== undefined)fileName=(()=>{
 				for(let [fileName,value] of files.list.entries())
 					if(value.text == text)return fileName;
@@ -1062,24 +1064,34 @@ const TEST = false;
 					let context = bracketContext;
 					let word;
 					let isFirst=true;//marks the start of a list e.g. ',' or '('. Is used to sepparate certain patterns.
+					let propertyAssignmentList=[];//'a.b.c=x'
 					tree = tree.filter(filterTree);
 					for(let i=0;i<tree.length;){
 						word = getWord(tree,i);
 						let match = match_pattern(tree,i);
-						if(match.pattern=="()>")match.usingLabels = match.params.map(v=>v.name[0]);//:Map(string,Param)
-						if(context.pattern == "." && context.params?.[0])isFirst=false;//'.b'
-						if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression
+						if(context.pattern == "." && context.params?.[0])isFirst=false;//if '.b' then end the '.' block
+						if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression. '::a ...' and '.b ...'
 							context=context.parent;
 						}
 						if(match.pattern||(match instanceof Simple)){
 							({i}=match);
-							if(match.pattern == "."){//'a.b'
+							//'a.b='
+							if((match.arg == "=" && match instanceof Simple)&& context.list.length>0)
+							if(context.list[context.list.length-1].pattern=="."){//supports 'a.b.c=' aswell
+								//assume: pattern 'a=' will be found since 'a.b=' -> '(a.b)(=)'
+									match = new Pattern({id:match.id,list:[context.list.pop()]});
+
+								}
+							}
+							else if(match.pattern == "()>")match.usingLabels = match.params.map(v=>v.name[0]);//:Map(string,Param)
+							else if(match.pattern == "."){//'a.b'
+								//assert: 'a.b' -> '(.)a "b"'
 								//prevent '(. b)' or ', . b' from evaling to '()'
 								if(isFirst){//if no 'a' or 'b' argument '(.)' is parsed as a label
 									//'a . . b' -> '(. a (.))b'
 									const simple = new Simple({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
 									simple.value = NameSpace.get;
-									if(match.params)i--;//'.b' -> '(.)b'
+									if(match.params[0])i--;//'.b' -> '(.)b' instead of '(.)()"b"'
 									match = simple;
 									{
 										yield match;
@@ -1094,10 +1106,11 @@ const TEST = false;
 								let match_arg = context.list.pop();
 								if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
 								match_arg.parent = match;
+								match.firstValue = match_arg.pattern=="."?match_arg.firstValue:match_arg instanceof Simple?match_arg:null;//:Simple|null
 								//match_arg.isFirst = true;
 								match.list.push(match_arg);
 							}
-							if(match.pattern == "::"){//get left arg match for 'r :: a'
+							else if(match.pattern == "::"){//get left arg match for 'r :: a'
 								//prevent '(:: ... )' or ', :: ...'
 								if(isFirst){//if no 'r' argument '(::)' is parsed as a label
 									const simple = new Simple ({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
@@ -1242,8 +1255,7 @@ const TEST = false;
 							//param == NaN -> not found, caught bty 'use' block
 						//----
 						const checkForSelfRef = p=>p?parents.includes(p?.owner)?null:p:undefined;
-						parents?.push?.(parent);
-						if(!stopAtUseBlocks&&parent.usingLabels&&!parents[parents.length-2]?.withBlock_isLeftArg){
+						if(!stopAtUseBlocks&&parent.usingLabels&&!parents[parents.length-1]?.withBlock_isLeftArg){
 							//assume: parent.type:"use"|"with"
 							let param;
 							if(parent.type == "use"){//'()>'
@@ -1256,7 +1268,7 @@ const TEST = false;
 							}
 							if(!param){
 								//stops the param search from passing through the 'use block' filter
-								if(getParam(name,parent,[...parents],true)?.param)param = NaN;
+								if(getParam(name,parent,[...parents,parent],true)?.param)param = NaN;
 								else param = undefined;
 								return {param,parents};
 							}
@@ -1266,6 +1278,7 @@ const TEST = false;
 							checkForSelfRef(parent?.currentLabels?.get?.(name))
 							??checkForSelfRef(parent?.startLabels?.get?.(name))
 						;
+						parents?.push?.(parent);
 						if(parent.type=="with"&&param)parents=undefined;
 						return param?{param,parents}:
 							parent.parent?
@@ -1642,15 +1655,16 @@ const TEST = false;
 }
 //bug: 'a = b = 1' -> null error
 tryCatch(()=>{//λ
-	compile(`
-		a=(x<=),b=((a)<=>),c=(b)=x,
+	loga(compile(`
+		a>a.b
+		//a=(x<=),b=((a)<=>),c=(b)=x,
 		//c=(b)=x,a=(x<=),b=((a)<=>),//Error since b is done after c
 		/*{log evalFully eval toJS}>(
 			a = [1 2 3],
 			log => a>log (toJS a) 1,
 			(a<=>2),
 		)*/
-	`)
+	`).value.map(v=>v))
 	//.call(JSintervace)
 	//.evalFully()
 });
