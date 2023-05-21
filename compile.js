@@ -147,7 +147,7 @@ const TEST = false;
 			static isTypeReducable(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
 				return exp==undefined?false:((exp instanceof Lazy || exp.constructor==Array || exp instanceof RecurSetter)&& !(exp.length==1 && exp[0] instanceof Lambda));
 			}
-			static isReducable(exp){return exp instanceof NameSpace?this.isReducable(exp.exp):this.isTypeReducable(exp)||exp?.labels}
+			static isReducable(exp){return exp instanceof NameSpace?this.isReducable(exp.exp):exp instanceof AsyncExp?exp.isReducable():this.isTypeReducable(exp)||exp?.labels}
 			isSimplyReducable(exp){return exp instanceof NameSpace?false:this.constructor.isTypeReducable(exp)&&!exp.labels}
 			//static isReducable(exp){return (exp instanceof Lazy || exp.constructor==Array &&!exp.labels)}
 			eval(stack=new Stack()){
@@ -220,7 +220,7 @@ const TEST = false;
 			}
 			static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
 				//if(Lazy.isReducable(foo))return new Lazy(Exp.eval(foo,foo,stack,1));
-				foo = foo.evalFully(stack);loga(foo)
+				foo = foo.evalFully(stack);
 				if(foo instanceof Int)return foo;
 				const inc = Int.increment;
 				const zero = new Int(0);
@@ -716,6 +716,31 @@ const TEST = false;
 			}
 			toJS(){return""+this}
 		}
+		class AsyncExp extends Exp{
+			//may be UNFINISHED
+			//mainly for importing files
+			constructor(promise,callList,id){
+				super();
+				this.id = id??undefined;
+				this.promise = promise;
+				promise.then(value=>{
+					this.value = value;
+					this.isReducable = true;
+				});
+				this.callList = callList??[];
+			}
+			id;//:ID
+			value = undefined;//:Exp?
+			isReducable=false;//:bool ; is set to true when the promise resolves.
+			call(arg,context,stack){
+				if(this.isReducable)return stack.doOnStack(this,stack=>[...this.callList,arg].reduce((s,v)=>s.call(v,context,stack),this.value));
+				else return new this.constructor(this.promise,[...this.callList,arg]);
+			}
+			eval(stack){
+				if(this.isReducable)return stack.doOnStack(this,stack=>value.call());
+				else return this;
+			}
+		}
 		{
 			let globals = (()=>{
 				if(!window)var window;
@@ -726,17 +751,6 @@ const TEST = false;
 				return obj;
 			});
 			var JSintervace = new NameSpace({
-				toJS:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s).toJS():v),
-				eval:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s):v),
-				evalFully:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.evalFully(s):v),
-				log:new MultiArgLambdaFunc(([logValue,returnValue],c,stack)=>{
-					console.log(logValue[Exp.symbol]?logValue.eval(stack):logValue);
-					return returnValue;
-				},2),
-				do:new MultiArgLambdaFunc(([value,then],c,stack)=>{value[
-					Exp.symbol]?stack.doOnStack(stack=>value.evalFully(stack)):value;
-					return then;
-				},2),
 				...globals,
 			});
 		}
@@ -919,8 +933,50 @@ const TEST = false;
 				return [v.name[0],v];
 			}));
 			globalContext.startLabels = new Map(Operator.owner.startLabels);
-			let name = "Infinity";
-			globalContext.startLabels.set(name,new Param({name:[name,undefined],owner:new BracketPattern({parent:globalContext}),value:RecurSetter.forever}));
+			const addPublics = (parent,value)=>{//map:Map(string => Exp)
+				//note: the new `param.owner` can not be the `globalContext`, since that would make references to this would trigger a reference error.
+				//for 'with' statements '(import)='
+				parent.publicLabels??=new Map;
+				for(let [i,v] of value.labels){
+					let [name,value]=[i,v];
+					let id = new FilelessWordData({word:name});
+					let param = new Param({name:[name,id],owner:new Pattern({parent:globalContext,id}),value});
+					param.owner.params=[param];
+					if(value instanceof NameSpace)addPublics(param.owner,value);
+					if(parent.startLabels)parent.startLabels.set(name,param);
+					parent.publicLabels.set(name,param);
+				}
+			}
+			const isNodeJS = !globalThis.window;
+			let fs;if(isNodeJS)fs=require("fs");
+			const importFile = async(type,name,context,stack)=>{
+				//UNFINISHED
+			};
+			addPublics(globalContext,new NameSpace(new Map([
+				["global",new NameSpace(new Map([
+					["js",JSintervace],//'{window eval}=import.std'
+					["toJS",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s).toJS():v)],
+					["toExp",new ArrowFunc((v,c,s)=>Exp.fromJS(v))],
+					["log",new MultiArgLambdaFunc(([logValue,returnValue],c,stack)=>{
+						console.log(logValue[Exp.symbol]?logValue.eval(stack):logValue);
+						return returnValue;
+					},2)],
+					["Infinity",RecurSetter.forever],
+					["import",new NameSpace(new Map([//UNFINISHED
+						["code",new ArrowFunc((name,context,stack)=>{
+							let fileString = importFile(name,context,stack);
+							return compile(fileString,name);
+						})],
+					]))],
+					["eval",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s):v)],
+					["evalFully",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.evalFully(s):v)],
+					["do",new MultiArgLambdaFunc(([value,then],c,stack)=>{value[
+						Exp.symbol]?stack.doOnStack(stack=>value.eval(stack)):value;
+						return then;
+					},2)],
+				]))],
+			])));
+			globalContext.startLabels
 			maxPriority= i;
 		}
 		function compile(text,fileName){
@@ -1142,15 +1198,16 @@ const TEST = false;
 					function filterTree(v,i,tree){
 						return typeof v[0]!="string"||!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/);
 					}
-					function* forEachTree(context,getTree){//isTree:node->Tree?
+					function* forEachTree(context,getTree,extraSycleAtTheEnd){//isTree:node->Tree?
 						const tree = getTree(context);
 						for(let i=0;i<tree.length;i++){
 							let [v,a] = [tree[i],context];
-							yield [v,i,a];
-							yield*forEachTree(v,getTree);
+							yield [v,i,a,tree];
+							yield*forEachTree(v,getTree,extraSycleAtTheEnd);
 						}
+						if(extraSycleAtTheEnd)yield[extraSycleAtTheEnd,tree.length,context,tree];
 					}
-					const forEachPattern = ()=>forEachTree(context,v=>v?.list??[]);
+					const forEachPattern = (extraSycleAtTheEnd=null)=>forEachTree(context,v=>v?.list??[],extraSycleAtTheEnd);
 					function addRefParam(match,match_parents,param){
 						//match:Pattern
 						//match_parents:Set(BracketPattern)?
@@ -1224,7 +1281,11 @@ const TEST = false;
 						;
 						parents?.push?.(parent);
 						if(parent.type=="with"&&param)parents=undefined;
-						return param?{param,parents}:
+						if(param===null && parent.parent){
+							let ans = getParam(name,parent.parent,parents);
+							if(ans.param)return ans;
+						}
+						return param!==undefined?{param,parents}:
 							parent.parent?
 								getParam(name,parent.parent,parents)
 								:{param,parents}
@@ -1469,7 +1530,7 @@ const TEST = false;
 							let i=0;
 							match.value = new Lazy;//single value, represents the right side of the assignment.
 							for(let param of match.params){//param:Param
-								if(!startLabels.has(param))startLabels.set(param.name[0],param);
+								if(!startLabels.has(param.name[0]))startLabels.set(param.name[0],param);
 								param.value = match.value;
 							}
 						}
@@ -1514,20 +1575,30 @@ const TEST = false;
 					}
 					//assert:'a.b' -> '(. a b)'
 					//find and link references. fill in match.value
-					for(let [match,i,bracketParent] of forEachPattern()){
+					for(let [match,i,bracketParent,list] of forEachPattern(new Pattern())){
+						{//assign labels in post-fix
+							//BODGED
+							let match = list[i-1];
+							if(match)
+							if(match.type == "assignment" || (match.type == "property_assignment" && match.firstValue)){//'=' and 'a.b='
+								if(bracketParent.pattern==","){
+									bracketParent=bracketParent.parent;
+								}
+								const isPublic = !!match.options.includes("<");
+								for(let param of match.params){
+									bracketParent.currentLabels.set(param.name[0],param);
+									if(isPublic){
+										bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
+										setPublicLabel(match.parent,param,false);
+									}
+								}
+							}
+						}
 						if(match.type == "assignment" || (match.type == "property_assignment" && match.firstValue)){//'=' and 'a.b='
 							if(bracketParent.pattern==","){
 								bracketParent=bracketParent.parent;
 							}
-							const isPublic = !!match.options.includes("<");
 							const isCode = !!match.options.includes(">");
-							for(let param of match.params){
-								bracketParent.currentLabels.set(param.name[0],param);
-								if(isPublic){
-									bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
-									setPublicLabel(match.parent,param,false);
-								}
-							}
 							if(isCode){
 								match.parent.value.push(Object.assign(match.params.map(v=>new Reference(v.value,0,v.id)),{id:match.id}));
 								match.isUsed = true;
@@ -1600,7 +1671,7 @@ const TEST = false;
 							};
 							match.parent.value.push(match.value);
 						}
-						else throw Error("compiler error: '"+match.type+"' haven't enumerated all possibilities");
+						else if(match.pattern!=undefined) throw Error("compiler error: '"+match.type+"' haven't enumerated all possibilities");
 					}
 					//handle references to null values
 					for(let [match,i,bracketParent] of forEachPattern()){
@@ -1729,7 +1800,7 @@ const TEST = false;
 					context.value.forEach(function forEach(v,i,a){
 						if(v instanceof RecurSetter)forEach(v.recur);
 						else if(v instanceof Reference)forEach(v.value);
-						else if(v instanceof NameSpace)v.labels.forEach(v.value);
+						else if(v instanceof NameSpace)v.labels.forEach(v=>forEach(v.value));
 						else if(v instanceof Array){
 							if(v.length == 0 && !v.labels)throw Error("compiler error: non-nulled empty list found"+(console.log(v,i)??""));
 							v.forEach(forEach);
@@ -1783,7 +1854,8 @@ const TEST = false;
 //only do it in nodeJS
 if(!globalThis.window)require("fs").readFile(process.argv[2]??"./test.lcpp","utf8",(err, data) => {
 	if(!err)tryCatch(()=>{//λ
-		compile(data).call(JSintervace)
-		//.evalFully()
+		compile(data)//.call(JSintervace)
+		.evalFully()
 	});
+	else console.log(error)
 });
