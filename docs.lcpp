@@ -317,12 +317,12 @@
 			//e.g.
 				(a> (a a ,a))
 				//is the same as
-				(a> a a (a))
+				(a> ((a a) (a)))
 				//is the same as
 				(a> a a a)
 		//e.g.
-			(a> b> f>x> (a, b f x)) //add
-			(a> a a (a, a a) a, a a)
+			(a> b> f>x> (a, b f x)), //add
+			(a> a a (a, a a) a, a a),
 	//pattern 'a =' :
 		//Similar to haskell, constants can be assigned using the 'a =' pattern, where 'a' is a label for a constant.
 		//constants are assigned to into their local scope, only ignoring blocks created by ','s.
@@ -429,20 +429,61 @@
 			//- If a property does not exist then the empty context '()' is returned.
 			//- If a literal word is passed used '.b' then the word is turned into a string literal.
 			//- Other than word literals, any short, single expression can be passed as a property in the dot operator.
-		//assigning properties:
+		//assigning properties: 'a.b=' '(...).b='
 			//When a property is assigned to, the change only applies within the scope.
 			//This prevents side-effects.
+			//patterns 'a.b.c=' and '(a).b.c='
+				//if the root object (the 'a' in 'a.b.c=') is a named label (e.g. 'a' or '+'), then that label is reassigned.
+					//e.g.
+						a = (b <= (c <= 1, c1 <= 2), b1 <= 2),
+						(
+							(
+								a . b . c = 2,
+								a,
+							)
+							//is the same as
+							(
+								a = (a, b <= (a . b, c <= 2)),
+								a,
+							)
+						)
+				//otherwise the reassignment is not done and a new modified object is returned
+					//e.g.
+						a = (b <= (c <= 1, c1 <= 2), b1 <= 2),
+						(
+							(//note: brackets arn't nesesarilly needed for this pattern, they are however, a simple way for the root object to not be a direct named label.
+								(a>a, a) . b . c = 2,
+							)
+							//is the same as
+							(
+								((a>a, a), b <= (a . b, c <= 2)),
+							)
+						)
+				//note:
+					//e.g.
+						a>
+							(a.b.c=2,a)
+							//returns the same value as
+							((a).b.c=2)
 			//e.g.
 				(
-					a = (b<=(c<=1,c1<=2),b1<=2),
-					a.b = 2,
-					a,
+					(
+						(
+							(a) . b . c = 2,
+							a,
+						)
+						//is the same as
+						(
+							a = (a, b <= (a . b, c <= 2)),
+							a,
+						)
+					)
 				)
 				//is the same as
 				(
-					a = (b<=(c<=1)),
-					a(c<=1,)
+					a = (b<=(c<=1,c1<=2),b1<=2),
 				)
+
 		//pattern '.b' or '.2' :
 			//
 			//pseudocode code for dot operator
@@ -470,7 +511,6 @@
 			//The code inside '.[ ]' is a normal scope and not an array scope
 				//e.g.
 					[1 2 3 4 5].[2 2]//returns '5' since '(2 2)' == '4'
-	//'. ='
 	//'<=' define public label
 		//e.g.
 			obj = (a<=2),
@@ -581,7 +621,7 @@
 		+ - * / ** %
 		++ --
 		& | ~ ^ >> << >>>
-		>= != <=
+		>= != (<=)
 		! 
 		&& || ^^
 		<- -> (<->)

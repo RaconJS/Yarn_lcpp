@@ -1,7 +1,12 @@
 //TEST
 const TEST = false;
 //UNTESTED
-//TODO
+//TODO:
+//- Make NameSpace an instance of Exp_Array, where nameSpace[0] is its expression
+//- Implement replace `nameSpace .exp` with `namespace[0]`
+//- Make Constext contain an array of all the parent contexts referenced by the Lazy expressions.
+//- Replace evalFully() with a partial evaluation system.
+//- Fix bug: allow '[f1 a, f2 b]' -> '[(f1 a) (f2 b)]' instead of '[f1 a (f2 b)]'
 //BODGED
 {//compile,files,JSintervace
 	//classes
@@ -13,6 +18,11 @@ const TEST = false;
 			eval(stack){return this}//lazy evaluatuation
 			evalFully(stack){return (this instanceof Lazy?this:new Lazy(this)).evalFully(stack)}//non-lazy evaluation
 			toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
+			static eval(exp,owner,stack,times=1){
+				for(let i=0;i<reps;i++)
+					exp=exp?.[Exp.symbol]?stack?stack.doOnStack(owner,stack=>exp.eval(stack)):exp.eval():exp;
+				return exp;
+			};
 			static fromJS(value,fileName){//:Exp
 				const addId = v=>Object.assign(v,{id:new WordData({fileName})});
 				let ans;
@@ -60,7 +70,7 @@ const TEST = false;
 				expression;//:Lazy
 				get value(){return this.expression}//:Exp
 				call(arg,context = new Context,stack = new Stack){return this.value.call(arg,context,stack)??Lambda.null}
-				eval(stack = new Stack){return this.value.eval(stack)??Lambda.null}
+				eval(stack = new Stack,context = new Context(undefined,undefined,1)){return this.value.eval(stack,context)??Lambda.null}
 				evalFully(stack = new Stack){return this.value.evalFully(stack)}
 			},
 			addInbuilt(exp,name="SOURCE"){
@@ -134,21 +144,23 @@ const TEST = false;
 				if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
 				else return this.eval(stack).call(arg,this.context,stack);
 			}//(a>a)(a>a a)
-			isTypeReducable(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
-				return (exp instanceof Lazy || exp.constructor==Array);
+			static isTypeReducable(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
+				return exp==undefined?false:((exp instanceof Lazy || exp.constructor==Array || exp instanceof RecurSetter)&& !(exp.length==1 && exp[0] instanceof Lambda));
 			}
-			isReducable(exp){return this.isTypeReducable(exp)&&!exp.labels}
+			static isReducable(exp){return exp instanceof NameSpace?this.isReducable(exp.exp):this.isTypeReducable(exp)||exp?.labels}
+			isSimplyReducable(exp){return exp instanceof NameSpace?false:this.constructor.isTypeReducable(exp)&&!exp.labels}
+			//static isReducable(exp){return (exp instanceof Lazy || exp.constructor==Array &&!exp.labels)}
 			eval(stack=new Stack()){
+				const context = this.context??new Context();
 				let ans = this;
 				{
 					//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
-					while(ans.length==1 && this.isReducable(ans[0]))ans=ans[0];//assume: ans is Tree
+					while(ans.length==1 && this.isSimplyReducable(ans[0]))ans=ans[0];//assume: ans is Tree
 					//ans:Lazy|Array
 					if(ans.length == 0)
 						if(1)throw Error("compiler error: all null values should be delt with at compile time");
 						else return Lambda.null;
 				}
-				const context = this.context;
 				//note this.map first calls 'new Lazy(this.length)' which is overwriten if there is at least 1 item in the expression.
 				ans = ans.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack,Number)->Lazy}}[]
 					typeof v == "number"?context.getValue(v):
@@ -190,17 +202,25 @@ const TEST = false;
 				}
 				return ans;
 			}
+			//; Lazy.evalFully
 			evalFully(stack=new Stack()){
 				let ans = this;
-				while((!(ans.length==1 && ans[0] instanceof Lambda)&& ans instanceof Lazy) || ans instanceof RecurSetter)
+				let bail =100000;
+				while(Lazy.isReducable(ans)&&bail-->0)
 					ans = ans.eval(stack);
+				if(bail<=0)throw Error("possible compiler error: bailled. may be caused by:"
+					+"1. A compiler bug: probably within the Lazy.isReducable function, or somethere else in the code"
+					+"2. An expression that takes many steps to evaluate;"
+					+"3. An expression that cannot be fully reduced (i.e. one that does not have a reduced form)"
+				);
 				return ans;
 			}
 			toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
 				return this.constructor.toInt(foo,stack);
 			}
 			static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
-				foo = foo.evalFully(stack);
+				//if(Lazy.isReducable(foo))return new Lazy(Exp.eval(foo,foo,stack,1));
+				foo = foo.evalFully(stack);loga(foo)
 				if(foo instanceof Int)return foo;
 				const inc = Int.increment;
 				const zero = new Int(0);
@@ -216,6 +236,7 @@ const TEST = false;
 			id;//:WordData
 			static null = new class Null extends Exp{
 				call(arg){return arg}
+				toJS(){return null}
 			};
 			call(arg=undefined,context=new Context(),stack){
 				context = new Context(context,arg);
@@ -391,18 +412,19 @@ const TEST = false;
 				toJS(){return this.func}
 			}
 			class MultiArgLambdaFunc extends Exp{//arraw function
-				constructor(func,len,args=[]){
+				constructor(func,len,args=[],id){
 					super()
 					this.func = func;//:(...Number[])->Number
 					this.len = len;
 					this.args = args;//:Lazy[]
+					this.id = id;
 				}
 				//isOperater:bool&Operator?
 				call(arg,context,stack){//Int->Int-> ... Int-> Int
 					if(this.args.length>=this.len-1){
 						return this.func([...this.args,arg],context,stack);
 					}
-					else return new this.constructor(this.func,this.len,[...this.args,arg]);
+					else return new this.constructor(this.func,this.len,[...this.args,arg],this.id);//TODO: add separate id's for different parts of the function.
 				}
 				toJS(){return (...args)=>this.func([...args])}
 			}
@@ -428,15 +450,24 @@ const TEST = false;
 			exp;//: Exp?
 			call(arg,context,stack){
 				if(this.exp)return this.exp.call(arg,context,stack);//{a>a a} x -> (a>a a) x
-				if(arg instanceof NameSpace)return new NameSpace(new Map(...this.labels,...arg.labels),arg.exp);
+				if(arg instanceof NameSpace)return new NameSpace(new Map([...this.labels,...arg.labels]),arg.exp);
 				else return new NameSpace(this.labels,arg);
+			}
+			eval(stack){
+				stack??=new Stack();
+				if(!Lazy.isReducable(this.exp))return this;
+				let exp=stack.doOnStack(this,stack=>this.exp.eval(stack));
+				if(exp instanceof NameSpace)return new NameSpace(new Map([...this.labels,...exp.labels]));
+				return new NameSpace(this.labels,exp);
 			}
 			toJS(){
 				let newObj = {};
 				for(let [i,v] of this.labels){
-					newObj[i]=v.toJS?.()??v;
+					newObj[i]=!v[Exp.symbol]?v:v.evalFully().toJS()??v;
 				}
-				return newObj;
+				let value = this.exp?.[Exp.symbol]?this.exp.evalFully().toJS():this.exp;
+				if(this.exp==undefined||this.exp==Lambda.null)return newObj;
+				else return Object.assign(value,newObj)
 			}
 			static get = new class NameSpace_Get extends MultiArgLambdaFunc{}(function get([obj,property],context,stack){
 				obj = obj.evalFully(stack);
@@ -453,7 +484,7 @@ const TEST = false;
 				if(obj instanceof NameSpace){
 					let ans = obj.labels.get(propertyStr);
 					if(ans)return ans;
-					if(obj.exp)return get([obj.exp,priority],context,stack);
+					if(obj.exp)return get([obj.exp,property],context,stack);
 					if(!ans)return Lambda.null;
 				}
 				else if(obj instanceof List){
@@ -468,6 +499,37 @@ const TEST = false;
 				obj instanceof StringExp
 				Lambda.null
 			},2);
+			static assign_id = new FilelessWordData({word:"assign part"});
+			static set = new class NameSpace_Set extends MultiArgLambdaFunc{}(function([nameSpace,property,value],context,stack){
+				return stack.doOnStack(new Exp({id:NameSpace.assign_id}),stack=>{
+					const tryAgain = ()=>new Lazy(new this.constructor(this.func,this.len,[nameSpace,property],this.id),value);
+					if(Lazy.isReducable(property))property = stack.doOnStack(NameSpace.assign_id,stack=>property.eval(stack));
+					if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
+					if(Lazy.isReducable(property))return tryAgain();
+					else {
+						if(property instanceof Float && !(nameSpace instanceof NameSpace)){
+							property = +property;
+							if(Lazy.isReducable(nameSpace))nameSpace = stack.doOnStack(NameSpace.assign_id,stack=>nameSpace.eval(stack));
+							if(Lazy.isReducable(nameSpace))return tryAgain();
+							if(nameSpace instanceof List){
+								let newList = Object.assign(new List(...nameSpace),{id:nameSpace.id});
+								if(!isNaN(property)&&Math.abs(property)!=Infinity&&property>=0)newList[property|0] = value;
+								return newList;
+							}
+							else return Lambda.null;
+						}
+						else if(property instanceof StringExp){
+							//asseert: nameSpace:NameSpace|reducable expression
+							let propertyStr = ""+property;
+							if(!(nameSpace instanceof NameSpace))return new NameSpace(new Map([[propertyStr,value]]),nameSpace,property.id);
+							let newObj = new NameSpace(new Map(nameSpace.labels),nameSpace.exp,property.id);
+							newObj.labels.set(propertyStr,value);
+							return newObj;
+						}
+						return Lambda.null;
+					}
+				});
+			},3)
 			static dot = this.get;
 		}
 		class Float extends Exp_Number{
@@ -517,7 +579,7 @@ const TEST = false;
 			//isOperater:bool&Operator?
 			call(arg,context,stack){//Int->Int-> ... Int-> Int
 				let args = [...this.args,arg];
-				if(this.args.length+1>=this.func.length){
+				if(args.length>=this.func.length){
 					const ans = this.func(...args.map(v=>+Lazy.toInt(v,stack)));
 					const nullValue = Lambda.null;
 					return typeof ans == "number"?
@@ -570,7 +632,7 @@ const TEST = false;
 				this.constructor.concat.call(this,context,stack).call(arg,context,stack);
 			}
 			eval(){return this}
-			toJS(){return [...this.map(v=>v.toJS?.()??v)]}
+			toJS(){return [...this.map(v=>v[Exp.symbol]?v.evalFully().eval().toJS():v)]}
 			static null = new class EndOfList extends Exp{
 				toJS(){return null};
 				call(){return this}
@@ -654,17 +716,30 @@ const TEST = false;
 			}
 			toJS(){return""+this}
 		}
-		if(!window)var window=undefined;
-		var JSintervace = new NameSpace({
-			toJS:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s).toJS():v),
-			eval:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s):v),
-			evalFully:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.evalFully(s):v),
-			log:new MultiArgLambdaFunc(([logValue,returnValue],c,stack)=>{
-				console.log(logValue[Exp.symbol]?logValue.eval(stack):logValue);
-				return returnValue
-			},2),
-			window:window?new NameSpace(window,Lambda.null):Lambda.null,
-		});
+		{
+			let globals = (()=>{
+				if(!window)var window;
+				if(!process)var process;
+				if(!global)var global;
+				let obj = {window,process,global};
+				for(let i in obj)Exp.fromJS(obj[i]);
+				return obj;
+			});
+			var JSintervace = new NameSpace({
+				toJS:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s).toJS():v),
+				eval:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s):v),
+				evalFully:new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.evalFully(s):v),
+				log:new MultiArgLambdaFunc(([logValue,returnValue],c,stack)=>{
+					console.log(logValue[Exp.symbol]?logValue.eval(stack):logValue);
+					return returnValue;
+				},2),
+				do:new MultiArgLambdaFunc(([value,then],c,stack)=>{value[
+					Exp.symbol]?stack.doOnStack(stack=>value.evalFully(stack)):value;
+					return then;
+				},2),
+				...globals,
+			});
+		}
 		for(let [i,v] of JSintervace.labels)
 			if(v!=Lambda.null)v.id = new FilelessWordData({word:"SOURCE: JS intervace: "+i});
 		{//old unued code
@@ -683,9 +758,11 @@ const TEST = false;
 			[ArrowFunc.prototype,"Function"],
 			[Int.increment,"increment"],
 			...[...List.methods].map(v=>[v[1],[v[0]]]),
-			[RecurSetter.forever],
-			[RecurSetter.forever[0]],
-		].forEach(v=>files.addInbuilt(v));
+			[RecurSetter.forever,"forever"],
+			[RecurSetter.forever[0],"forever"],
+			[NameSpace.get,"get"],
+			[NameSpace.set,"set"],
+		].forEach(v=>files.addInbuilt(...v));
 	}
 	{
 		//compiler classes
@@ -741,7 +818,7 @@ const TEST = false;
 			}
 			class Param{
 				constructor(data){Object.assign(this,data)}
-				name;//:[String,Number] ; name of the parameter or label
+				name;//:[String,ID] ; name of the parameter or label, where `name[0]==name[1].word`
 				index;//:number ; if a pattern has muli parameters it shows which one it is.
 				owner;//: Pattern & context with a {list:Array} ; is the expression that the label bellongs to
 				value;//: Lazy? ; only for assignment patterns
@@ -764,6 +841,7 @@ const TEST = false;
 			}
 		//----
 		const globalContext = new BracketPattern;
+		let maxPriority;
 		assignGlobal:{
 			//applies to Patterns with type = "operator"
 			const bool_true = new class True extends Lambda{}(new Lambda(1));
@@ -808,10 +886,10 @@ const TEST = false;
 				["||",  i,new Lambda(new Lambda(1,1,0)),2],
 				["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
 				["=" ,  i,new MultiArgLambdaFunc(function([nameSpace,property,value],context,stack){
-					if(Lazy.prototype.isReducable(property) )property = property.eval(stack);
+					if(Lazy.isReducable(property) )property = property.eval(stack);
 					if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
-					if(Lazy.prototype.isReducable(nameSpace))nameSpace = nameSpace.eval(stack);
-					if(Lazy.prototype.isReducable(nameSpace)||Lazy.prototype.isReducable(property))
+					if(Lazy.isReducable(nameSpace))nameSpace = nameSpace.eval(stack);
+					if(Lazy.isReducable(nameSpace)||Lazy.isReducable(property))
 						return Object.assign(new Lazy(this,nameSpace.eval(stack),property.eval(stack)),{context,id:assign_id});
 					else {
 						if(property instanceof Float && !(nameSpace instanceof NameSpace)){
@@ -945,7 +1023,7 @@ const TEST = false;
 					let id = tree[i][1];
 					let pattern = "";
 					let options="";//'()=' '()<=>'
-					let params=[];//:Tree|Param[]|[String,Number][]
+					let params=[];//:Tree|[]tree & [String,ID][]
 					let hasOwnContext=false;
 					let type="operator";
 					let oldI=i;
@@ -1060,144 +1138,10 @@ const TEST = false;
 					let indentNum = (word.match(/\n\s*/g)??[]).reduce((s,v)=>Math.min(s,v.length),Infinity);
 					return word.split("\n").reduce((s,v)=>s+v.substr(indentNum));
 				};
-				function* getPatterns(tree,bracketContext){
-					let context = bracketContext;
-					let word;
-					let isFirst=true;//marks the start of a list e.g. ',' or '('. Is used to sepparate certain patterns.
-					let propertyAssignmentList=[];//'a.b.c=x'
-					tree = tree.filter(filterTree);
-					for(let i=0;i<tree.length;){
-						word = getWord(tree,i);
-						let match = match_pattern(tree,i);
-						if(context.pattern == "." && context.params?.[0])isFirst=false;//if '.b' then end the '.' block
-						if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression. '::a ...' and '.b ...'
-							context=context.parent;
-						}
-						if(match.pattern||(match instanceof Simple)){
-							({i}=match);
-							//'a.b='
-							if((match.arg == "=" && match instanceof Simple)&& context.list.length>0)
-							if(context.list[context.list.length-1].pattern=="."){//supports 'a.b.c=' aswell
-								//assume: pattern 'a=' will be found since 'a.b=' -> '(a.b)(=)'
-									match = new Pattern({id:match.id,list:[context.list.pop()]});
-
-								}
-							}
-							else if(match.pattern == "()>")match.usingLabels = match.params.map(v=>v.name[0]);//:Map(string,Param)
-							else if(match.pattern == "."){//'a.b'
-								//assert: 'a.b' -> '(.)a "b"'
-								//prevent '(. b)' or ', . b' from evaling to '()'
-								if(isFirst){//if no 'a' or 'b' argument '(.)' is parsed as a label
-									//'a . . b' -> '(. a (.))b'
-									const simple = new Simple({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
-									simple.value = NameSpace.get;
-									if(match.params[0])i--;//'.b' -> '(.)b' instead of '(.)()"b"'
-									match = simple;
-									{
-										yield match;
-										context.list.push(match);
-										//++i;
-										isFirst = false;
-										continue;
-									}
-								}
-								//parsing full 'a.b' pattern
-								//gets the 'a' part
-								let match_arg = context.list.pop();
-								if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
-								match_arg.parent = match;
-								match.firstValue = match_arg.pattern=="."?match_arg.firstValue:match_arg instanceof Simple?match_arg:null;//:Simple|null
-								//match_arg.isFirst = true;
-								match.list.push(match_arg);
-							}
-							else if(match.pattern == "::"){//get left arg match for 'r :: a'
-								//prevent '(:: ... )' or ', :: ...'
-								if(isFirst){//if no 'r' argument '(::)' is parsed as a label
-									const simple = new Simple ({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
-									match = simple;
-									{
-										yield match;
-										context.list.push(match);
-										++i;
-										isFirst = false;
-										continue;
-									}
-								}
-								let match_arg = context.list.pop();
-								if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
-								match_arg.parent = match;
-								match_arg.isFirst = true;
-								match.list.push(match_arg);
-							}
-							match.parent = context;
-							context.list.push(match);
-							match.isFirst=isFirst;
-							if(match.list){
-								context=match;
-								isFirst=true;
-							}
-							else isFirst=false;
-							yield match;
-							continue;
-						}
-						else if("([{".includes(word)){
-							let id = tree[i][1];
-							++i;
-							let bracket=new BracketPattern({pattern:{"(":"()", "[":"[]", "{":"{}"}[word],list:[],parent:context,isFirst,id});
-							yield bracket;
-							let withBlock_pattern = (word=getWord(tree,i+2))?.match?.(/<?=>?/);//:bool|Pattern?
-							if(withBlock_pattern){//with statement
-								//()=, ()=>, ()<=, ()<=>
-								//withBlock_pattern.options: "=" | "=>" | "<=" "<=>"
-								//withBlock_pattern.list: ['(...)=' , '()=...']
-								withBlock_pattern = new Pattern({pattern:"()=",options:word,type:"with",list:[bracket],parent:context,isFirst,id:getID(tree,i+2),publicLabels:new Map});
-								if(word.match(">"))withBlock_pattern.usingLabels = new Map;
-								bracket.isFirst = true;
-								bracket.parent = withBlock_pattern;
-								bracket.withBlock_isLeftArg = true;
-								context.list.push(withBlock_pattern);
-							}
-							else context.list.push(bracket);
-							yield*getPatterns(tree[i],bracket);
-							++i;
-							if(withBlock_pattern){//'()='
-								++i;
-								context = new BracketPattern({pattern:",",list:[],parent:withBlock_pattern,id:getID(tree,i),isFirst:true});
-								withBlock_pattern.list.push(context);
-								++i;
-								isFirst = true;
-								continue;
-							}
-						}
-						else if(")]}".includes(word)){
-							return;
-						}
-						else if(word == ","){
-							//yield comma;
-							//context.push(comma);
-							let id = tree[i][1];
-							context = new BracketPattern({pattern:",",parent:bracketContext,list:[],isFirst,id});
-							yield context;
-							bracketContext.list.push(context);
-							isFirst=true;
-							i++;
-							continue;
-						}
-						else {
-							let match = new Simple({id:tree[i][1],arg:word,type:"symbol",parent:context,isFirst});
-							yield match;
-							context.list.push(match);
-						};
-						i++
-						isFirst=false
-					}
-				}
-				const context = new BracketPattern({parent:globalContext,value:new Lazy});
 				//extra functions for getAssignments
 					function filterTree(v,i,tree){
 						return typeof v[0]!="string"||!getWord(tree,i)?.match?.(/^(\s*|\/\*[\s\S]*\*\/|\/\/.*)$/);
 					}
-					[...getPatterns(tree,context)];//mutates context
 					function* forEachTree(context,getTree){//isTree:node->Tree?
 						const tree = getTree(context);
 						for(let i=0;i<tree.length;i++){
@@ -1312,7 +1256,6 @@ const TEST = false;
 						}
 						else return value;
 					}
-					let maxPriority;
 					function parseNumber(word){
 						let base = word[1]=="b"?2:word[1]=="x"?16:10;
 						return !isNaN(+word)?+word:(([a,b])=>+a+b/base**b.length)(word.split("."));
@@ -1343,13 +1286,171 @@ const TEST = false;
 					};
 				//----
 				//mutates context
+				function* getPatterns(tree,bracketContext){
+					let context = bracketContext;
+					let word;
+					let isFirst=true;//marks the start of a list e.g. ',' or '('. Is used to sepparate certain patterns.
+					let propertyAssignmentList=[];//'a.b.c=x'
+					tree = tree.filter(filterTree);
+					for(let i=0;i<tree.length;){
+						word = getWord(tree,i);
+						let match = match_pattern(tree,i);
+						if(context.pattern == "." && context.params?.[0])isFirst=false;//if '.b' then end the '.' block
+						if(!isFirst)while(context.pattern=="::"||context.pattern == "."){//takes in a single, short expression. '::a ...' and '.b ...'
+							context=context.parent;
+						}
+						if(match.pattern||(match instanceof Simple)){
+							({i}=match);
+							if(match.pattern == "()>")match.usingLabels = match.params.map(v=>v.name[0]);//:Map(string,Param)
+							else if(match.pattern == "."){//'a.b'
+								//assert: 'a.b' -> '(.)a "b"'
+								//prevent '(. b)' or ', . b' from evaling to '()'
+								if(isFirst){//if no 'a' or 'b' argument '(.)' is parsed as a label
+									//'a . . b' -> '(. a (.))b'
+									const simple = new Simple({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
+									simple.value = NameSpace.get;
+									if(match.params[0])i--;//'.b' -> '(.)b' instead of '(.)()"b"'
+									match = simple;
+									{
+										yield match;
+										context.list.push(match);
+										//++i;
+										isFirst = false;
+										continue;
+									}
+								}
+								//parsing full 'a.b' pattern
+								//gets the 'a' part
+								let match_arg = context.list.pop();
+								if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
+								match_arg.parent = match;
+								match.firstValue = match_arg.pattern=="."?match_arg.firstValue:match_arg instanceof Simple?match_arg:null;//:Simple|null
+								//match_arg.isFirst = true;
+								match.list.push(match_arg);
+							}
+							else if(match.pattern == "::"){//get left arg match for 'r :: a'
+								//prevent '(:: ... )' or ', :: ...'
+								if(isFirst){//if no 'r' argument '(::)' is parsed as a label
+									const simple = new Simple ({arg:word,id:match.id,type:"symbol",isFirst,parent:context});
+									match = simple;
+									{
+										yield match;
+										context.list.push(match);
+										++i;
+										isFirst = false;
+										continue;
+									}
+								}
+								let match_arg = context.list.pop();
+								if(!match_arg)throw Error("compiler error: May have to change 'if(isFirst)'.");
+								match_arg.parent = match;
+								match_arg.isFirst = true;
+								match.list.push(match_arg);
+							}
+							match.parent = context;
+							context.list.push(match);
+							match.isFirst=isFirst;
+							if(match.list){
+								context=match;
+								isFirst=true;
+							}
+							else isFirst=false;
+							yield match;
+							continue;
+						}
+						else if("([{".includes(word)){
+							let id = tree[i][1];
+							++i;
+							let bracket=new BracketPattern({pattern:{"(":"()", "[":"[]", "{":"{}"}[word],list:[],parent:context,isFirst,id});
+							yield bracket;
+							let withBlock_pattern = (word=getWord(tree,i+2))?.match?.(/<?=>?/);//:bool|Pattern?
+							if(withBlock_pattern){//with statement
+								//()=, ()=>, ()<=, ()<=>
+								//withBlock_pattern.options: "=" | "=>" | "<=" "<=>"
+								//withBlock_pattern.list: ['(...)=' , '()=...']
+								withBlock_pattern = new Pattern({pattern:"()=",options:word,type:"with",list:[bracket],parent:context,isFirst,id:getID(tree,i+2),publicLabels:new Map});
+								if(word.match(">"))withBlock_pattern.usingLabels = new Map;
+								bracket.isFirst = true;
+								bracket.parent = withBlock_pattern;
+								bracket.withBlock_isLeftArg = true;
+								context.list.push(withBlock_pattern);
+							}
+							else context.list.push(bracket);
+							yield*getPatterns(tree[i],bracket);
+							++i;
+							if(withBlock_pattern){//'()='
+								++i;
+								context = new BracketPattern({pattern:",",list:[],parent:withBlock_pattern,id:getID(tree,i),isFirst:true});
+								withBlock_pattern.list.push(context);
+								++i;
+								isFirst = true;
+								continue;
+							}
+						}
+						else if(")]}".includes(word)){
+							return;
+						}
+						else if(word == ","){
+							//yield comma;
+							//context.push(comma);
+							let id = tree[i][1];
+							context = new BracketPattern({pattern:",",parent:bracketContext,list:[],isFirst,id});
+							yield context;
+							if(bracketContext.pattern=="[]"&&bracketContext.list[0]?.pattern!=","){//if comma used in list, then all list items are separated by commas
+								let newListStart = new BracketPattern({pattern:",",parent:bracketContext,list:[...bracketContext.list],isFirst,id});
+								bracketContext.list = [newListStart];
+								for(let match of newListStart.list){
+									if(match.parent==bracketContext)match.parent = newListStart;
+								}
+							}
+							bracketContext.list.push(context);
+							isFirst=true;
+							i++;
+							continue;
+						}
+						else {
+							let match = new Simple({id:tree[i][1],arg:word,type:"symbol",parent:context,isFirst});
+							//'a.b='
+							if(match.arg.match(/<?=>?/) && context.list.length>0 
+								&& context.list[context.list.length-1].pattern=="."
+							){//supports 'a.b.c=' aswell
+								//assume: pattern 'a=' will not be found since 'a.b=' -> '(a.b)(=)'
+								const propertyChain = context.list.pop();
+								match = new Pattern({pattern:"a.b=",type:"property_assignment",id:match.id,list:[propertyChain],params:[]});
+								propertyChain.parent = match;
+								match.firstValue = propertyChain.firstValue;//:Simple?
+								if(match.firstValue){//if 'a.b=' instead of '(a).b='
+									match.options = word;//reassign
+									match.params = [new Param({name:[match.firstValue.arg,match.firstValue.id],owner:match,index:0})];
+								}
+								match.isFirst=isFirst;
+								match.parent = context;
+								yield match;
+								context.list.push(match);
+								context=match;
+								isFirst=true;
+								i++;
+								continue;
+							}
+							yield match;
+							context.list.push(match);
+						};
+						i++
+						isFirst=false
+					}
+				}
+				const context = new BracketPattern({parent:globalContext,value:new Lazy});
+				[...getPatterns(tree,context)];//mutates context
 				passes:{
 					//getAssignments:
 					//find definisions & make match.value
 					for(let [match,i,bracketParent] of forEachPattern()){
 						match.funcLevel = match.parent?.funcLevel || 0;
 						if(match.parent.pattern == "::" && i==0)match.funcLevel--; //'r' does use the inner '::' context
-						if(match.pattern == "="){//assignment
+						if(match.type == "assignment" || (match.type == "property_assignment" && match.firstValue)){//'=' or 'a.b='
+							if(bracketParent.pattern==","){
+								bracketParent=bracketParent.parent;
+							}
 							const isPublic = !!match.options.includes("<");
 							if(isPublic){
 								for(let param of match.params){
@@ -1357,14 +1458,6 @@ const TEST = false;
 									bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
 									setPublicLabel(match.parent,param,true);
 								}
-							}
-							if(bracketParent.pattern==","){
-								{//set up assignment properties
-									bracketParent.startLabels ??= new Map();//String|Number => Param
-									bracketParent.currentLabels ??= new Map();
-									bracketParent.refs ??= new Set();//:Set(BracketPattern) where p.refs.get(x).refs.get(p) == undefined
-								}
-								bracketParent=bracketParent.parent;
 							}
 							//assume: bracketParent == match.parent
 							{//set up assignment properties
@@ -1380,12 +1473,15 @@ const TEST = false;
 								param.value = match.value;
 							}
 						}
-						else if(match.type == "function"){//assume pre-fix
+						else if(match.type == "property_assignment"){
+							match.value = new Lazy;
+						}
+						else if(match.type == "function"){//'>' ; assume pre-fix
 							if(match.pattern==">")match.startLabels = new Map(match.params.map(v=>[v.name[0],v]));
 							match.funcLevel++;
 							match.value = new Lambda;
 						}
-						else if(match.type == "recursion"){
+						else if(match.type == "recursion"){//'::'
 							match.value = new RecurSetter();
 							match.funcLevel++;
 						}
@@ -1395,7 +1491,7 @@ const TEST = false;
 						else if(match.pattern == "()="){//with_block
 							//UNFINISHED: with/use is not fully implemented
 							if(match.options.includes(">"))match.usingLabels = new Map;//:Map(string,Param) ; for with_use patterns '()=>' and '()<=>'
-							match.value = [];//this value isn't used in final code
+							match.value = [];//this value isn't used in final code.
 						}
 						else if(match.pattern == "()>"){//use_block
 							//UNFINISHED: with/use is not fully implemented
@@ -1419,11 +1515,14 @@ const TEST = false;
 					//assert:'a.b' -> '(. a b)'
 					//find and link references. fill in match.value
 					for(let [match,i,bracketParent] of forEachPattern()){
-						if(match.pattern == "="){//assignment
+						if(match.type == "assignment" || (match.type == "property_assignment" && match.firstValue)){//'=' and 'a.b='
+							if(bracketParent.pattern==","){
+								bracketParent=bracketParent.parent;
+							}
 							const isPublic = !!match.options.includes("<");
 							const isCode = !!match.options.includes(">");
 							for(let param of match.params){
-								match.parent.currentLabels.set(param.name[0],param);
+								bracketParent.currentLabels.set(param.name[0],param);
 								if(isPublic){
 									bracketParent.value.labels.set(param.name[0],handleMultiAssign(param.value,param));
 									setPublicLabel(match.parent,param,false);
@@ -1488,7 +1587,7 @@ const TEST = false;
 							}
 							match.parent.value.push(match.value);
 						}
-						else if(["function","recursion","property","with","use"].includes(match.type))match.parent.value.push(match.value);
+						else if(["function","recursion","property","with","use","property_assignment"].includes(match.type))match.parent.value.push(match.value);
 						else if(match instanceof BracketPattern){//',' '()' '[]' '{}'
 							if(match.parent.type == "with" && match.parent.list[0] == match)continue;
 							if(match.parent.type == "with"){
@@ -1516,7 +1615,8 @@ const TEST = false;
 							}
 						}
 					}
-					//finds recursion pattern 'r' in 'r :: a'. Also parses 'a.b' where b is a label
+					//finds recursion pattern 'r' in 'r :: a'.
+					//parses 'a.b' where b is a label
 					for(let [match,i,bracketParent] of forEachPattern()){
 						if(match.pattern=="::"){
 							match.value.recur = Object.assign(new Lazy(match.value.shift()),{id:match.list[0].id});
@@ -1531,6 +1631,23 @@ const TEST = false;
 								//assume: match.value[0] == NameSpace.get
 								match.value.push(Object.assign(new StringExp(word),{id}));
 							}
+						}
+					}
+					//assign 'a.b=' patterns, (property chain assignment)
+					for(let [match] of forEachPattern()){//must be done after 'a.b's are parsed and assigned.
+						if(match.type == "property_assignment"){//'a.b='
+							let property = match.list[0];//'(.) b "c"'
+							let value = match.list[1].value;
+							//'a.b' -> '{a,b=}'
+							match.value.splice(0,match.value.length);
+							while(property.type == "property"){//'a.b.c=' ; note 'a.b.c=' represents property chain assignment.
+								value = [NameSpace.set,property.value[1],property.value[2],value];
+								value.id=property.value.id;
+								property=property.list[0];
+							}
+							//assert: match.value = '(=) (a) "b" ((=) (a.b) "c" value) '
+							match.value.push(value);
+							match.value.id=match.id;//the array is only used to add match.id to the construct.
 						}
 					}
 					//remove empty commas caused by assignments e.g. '(a=1,b=2,a)' -> '(a=1,(b=2),(a))' -> '(()(a))' -> '(a)'
@@ -1580,11 +1697,16 @@ const TEST = false;
 							}
 						}
 					}
+					for(let [match,i,bracketParent] of forEachPattern()){
+						if(match.pattern=="[]"){
+							match.value.forEach((v,i,a)=>a[i]=Object.assign(new Lazy(v),{id:undefined}));//v.constructor==Array?Object.assign(new Lazy(),v):v)
+						}
+					}
 					//remove single commas 'a,b' -> 'a (b)' -> 'a b'
 					for(let [match,i,bracketParent] of forEachPattern()){
 						if(match.pattern==","){
 							let index = match.parent.value.indexOf(match.value);
-							if(match.value.length == 1 || index == 0){
+							if(match.value.length == 1 || (index == 0 && match.parent.pattern != "[]")){//allow for '[,a,b,c]'
 								match.parent.value.splice(index,1,...match.value);
 								match.list.forEach(v=>v.parent=match.parent);
 							}
@@ -1592,10 +1714,14 @@ const TEST = false;
 					}
 					//parse null values and simplify expressions: '()' -> `Lambda.null`
 					for(let [match,i,bracketParent] of forEachPattern()){
-						if(Lazy.prototype.isTypeReducable(match.value)&& match.value.length==0){
+						if(Lazy.isTypeReducable(match.value)&& match.value.length==0){
 							let index = match.parent.value.indexOf(match.value);
 							if(index!=-1)//may of already been removed ealier
 								match.value.labels?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
+						}
+						if(match.value instanceof NameSpace && Lazy.isTypeReducable(match.value?.exp) && match.exp?.value?.length==0){
+							if(match.value.exp.labels)match.value.exp = Lambda.null;
+							else match.value.exp.push(Lambda.null);
 						}
 					}
 					if(context.value.length==0)context.value.push(Lambda.null);//
@@ -1654,17 +1780,10 @@ const TEST = false;
 	}
 }
 //bug: 'a = b = 1' -> null error
-tryCatch(()=>{//λ
-	loga(compile(`
-		a>a.b
-		//a=(x<=),b=((a)<=>),c=(b)=x,
-		//c=(b)=x,a=(x<=),b=((a)<=>),//Error since b is done after c
-		/*{log evalFully eval toJS}>(
-			a = [1 2 3],
-			log => a>log (toJS a) 1,
-			(a<=>2),
-		)*/
-	`).value.map(v=>v))
-	//.call(JSintervace)
-	//.evalFully()
+//only do it in nodeJS
+if(!globalThis.window)require("fs").readFile(process.argv[2]??"./test.lcpp","utf8",(err, data) => {
+	if(!err)tryCatch(()=>{//λ
+		compile(data).call(JSintervace)
+		//.evalFully()
+	});
 });
