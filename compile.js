@@ -14,13 +14,13 @@ const TEST = false;
 		//OutExp: Lazy
 		class Exp{
 			//id:WordData
-			call(arg,context,stack){return stack.doOnStack(this,stack=>this.eval(stack).call(arg,context,stack))}
+			call(arg,context,stack){return stack.doOnStack(this,arg,stack=>this.eval(stack).call(arg,context,stack))}
 			eval(stack){return this}//lazy evaluatuation
 			evalFully(stack){return (this instanceof Lazy?this:new Lazy(this)).evalFully(stack)}//non-lazy evaluation
 			toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
-			static eval(exp,owner,stack,times=1){
+			static eval(exp,ownerExp,stack,times=1){
 				for(let i=0;i<reps;i++)
-					exp=exp?.[Exp.symbol]?stack?stack.doOnStack(owner,stack=>exp.eval(stack)):exp.eval():exp;
+					exp=exp?.[Exp.symbol]?stack?stack.doOnStack(ownerExp,exp,stack=>exp.eval(stack)):exp.eval():exp;
 				return exp;
 			};
 			static fromJS(value,fileName){//:Exp
@@ -41,7 +41,7 @@ const TEST = false;
 							new NameSpace(value)
 						;
 						if(ans.id==undefined)ans.id = addId(ans);
-					break;
+					bbreak;
 				}
 				return ans == Lambda.null?ans:addId(ans);
 			}
@@ -134,6 +134,7 @@ const TEST = false;
 			//Lazy : Exp[]
 			context;//:Context
 			labels;//:Map(string=>Reference)? ; if this exists then namespace-like labels are added to the expressiong when evaluated.
+			isList;//:bool; true=>'[]' , false=>'()'
 			constructor(...exps){
 				//if(exps.includes(undefined))throw Error("compiler error");
 				super(exps.length);
@@ -145,9 +146,13 @@ const TEST = false;
 				else return this.eval(stack).call(arg,this.context,stack);
 			}//(a>a)(a>a a)
 			static isTypeReducable(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
-				return exp==undefined?false:((exp instanceof Lazy || exp.constructor==Array || exp instanceof RecurSetter)&& !(exp.length==1 && exp[0] instanceof Lambda));
+				return exp==undefined?false:((exp instanceof Lazy || exp.constructor==Array)&& !(exp.length==1 && exp[0] instanceof Lambda));
 			}
-			static isReducable(exp){return exp instanceof NameSpace?this.isReducable(exp.exp):exp instanceof AsyncExp?exp.isReducable():this.isTypeReducable(exp)||exp?.labels}
+			static isReducable(exp){
+				return exp instanceof NameSpace?this.isReducable(exp.exp):
+					exp instanceof AsyncExp?exp.isReducable():
+					exp instanceof RecurSetter||this.isTypeReducable(exp)||exp?.labels;
+			}
 			isSimplyReducable(exp){return exp instanceof NameSpace?false:this.constructor.isTypeReducable(exp)&&!exp.labels}
 			//static isReducable(exp){return (exp instanceof Lazy || exp.constructor==Array &&!exp.labels)}
 			eval(stack=new Stack()){
@@ -157,7 +162,7 @@ const TEST = false;
 					//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
 					while(ans.length==1 && this.isSimplyReducable(ans[0]))ans=ans[0];//assume: ans is Tree
 					//ans:Lazy|Array
-					if(ans.length == 0)
+					if(ans.length == 0 && !ans.labels||ans.list)
 						if(1)throw Error("compiler error: all null values should be delt with at compile time");
 						else return Lambda.null;
 				}
@@ -169,7 +174,7 @@ const TEST = false;
 					v instanceof Lambda?Object.assign(new Lazy(v),{context,id:v.id}):
 					v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{...v,context,id:v.id}):
 					v instanceof Reference?Object.assign(new Lazy(v.value),{id:v.id,context:context.getContext(v.levelDif)}):
-					v instanceof Lazy?v:
+					v instanceof Lazy?v.context?v:Object.assign(new Lazy(...v),{...v,context}):
 					v instanceof Float?v:
 					v instanceof Int?v://assume (Int extends Float) or (Float extends Int)
 					v instanceof List?v:
@@ -179,7 +184,7 @@ const TEST = false;
 					v instanceof Exp_Array||
 					v instanceof Exp_String||
 					v instanceof Exp_Number?v:
-					v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id,labels:v.labels}):
+					v instanceof Array?Object.assign(new Lazy(...v),{context,id:v.id??this.id,isList:v.isList,labels:v.labels}):
 					/*v instanceof Object?(v=>{
 						let labels=new Map();
 						for(let i in v){
@@ -188,19 +193,23 @@ const TEST = false;
 						return new NameSpace(labels);
 					})(v):*/
 					v//uncallable object
-				).reduce((s,v)=>
-					stack.doOnStack(v,stack=>s.call(v,context,stack))
 				);
-				//optimise for next time.
-				if(this.length>1)this.splice(0,this.length,ans);
+				ans = this.isList?new List(...ans):
+					ans.reduce((s,v)=>
+						stack.doOnStack(s,v,stack=>s.call(v,context,stack))
+					)
+				;
 				if(this.labels){
 					let newLabels = new Map();
 					for(let [i,v] of this.labels){
-						newLabels.set(i,new Lazy(v).eval(stack));
+						newLabels.set(i,Object.assign(new Lazy(v),{context}).eval(stack));
 					}
 					ans = Object.assign(new NameSpace(newLabels,ans),{id:ans.id});
 				}
-				return ans;
+				{//optimise for next time.
+					this.splice(0,this.length,ans);
+					if(this.labels)this.labels = undefined;
+				}return ans;
 			}
 			//; Lazy.evalFully
 			evalFully(stack=new Stack()){
@@ -253,7 +262,7 @@ const TEST = false;
 			id;//:WordData
 			getRecursLeft(stack){//()-> finite Number | Infinity
 				if(this.recur.length==1 && this.recur[0] == RecurSetter.forever)return Infinity;
-				let ans = stack.doOnStack(this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur.id,context:this.context}),stack));
+				let ans = stack.doOnStack(this,this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur.id,context:this.context}),stack));
 				if(+ans == Infinity||+ans<0||isNaN(+ans))ans = 0;//make finite
 				return ans;
 			}
@@ -320,12 +329,12 @@ const TEST = false;
 				super(exps.length);
 				Object.assign(this,exps);
 			}
-			doOnStack(arg,foo){
-				let stackableObject = arg;//expression that will be added onto the stack.
-				const data = stackableObject.id;
+			doOnStack(foo,arg,func){//arg:Exp|Any,foo:Exp|Any
+				let stackableObjects = [foo,arg];//expression that will be added onto the stack.
+				const data = foo.id;
 				let oldMaxRecur = data?.maxRecur;
 				let recurs = {value:0};//
-				if(!this.#add(stackableObject,arg,recurs)){//recurs:mut
+				if(!this.#add(foo,arg,recurs)){//recurs:mut
 					recurs = recurs.value;
 					//note: stack.add already removes the lambda from the stack, so it does not need to be done here.
 					//recursion detected
@@ -333,18 +342,19 @@ const TEST = false;
 						data.throwError("recursion", "unbounded recursion detected. Recursion level: "+recurs+"",a=>Error(a),this);
 					}else return Lambda.null;
 				}else {}
-				let ans = foo(this);
-				this.#remove(stackableObject);
+				let ans = func(this);
+				this.#remove(foo,arg);
 				if(data)data.maxRecur = oldMaxRecur;
 				return ans;
 			}
-			#add(exp,recurSetter=undefined,recurs_out){
+			#add(exp,arg,recurs_out){
+				this.unshift(arg?.[Exp.symbol]?arg.id:undefined);
 				let id = exp.id;
 				if(id!=undefined){
 					this.unshift(id);
 				}
 				else return true;
-				//recurSetter:RecurSetter
+				if(1)return true;//stack system sometimes doesn't work for unknown reasons
 				const stack = this;
 				let recursLeft= exp.context?.maxRecur ?? 1;
 				let data = id;
@@ -362,6 +372,7 @@ const TEST = false;
 			}
 			#remove(lambda){
 				if(lambda.id==undefined)return;
+				this.shift();
 				this.shift();
 			}
 			stackCheck(maxRecur){//only checks last item
@@ -456,7 +467,7 @@ const TEST = false;
 			eval(stack){
 				stack??=new Stack();
 				if(!Lazy.isReducable(this.exp))return this;
-				let exp=stack.doOnStack(this,stack=>this.exp.eval(stack));
+				let exp=stack.doOnStack(this,undefined,stack=>this.exp.eval(stack));
 				if(exp instanceof NameSpace)return new NameSpace(new Map([...this.labels,...exp.labels]));
 				return new NameSpace(this.labels,exp);
 			}
@@ -470,8 +481,12 @@ const TEST = false;
 				else return Object.assign(value,newObj)
 			}
 			static get = new class NameSpace_Get extends MultiArgLambdaFunc{}(function get([obj,property],context,stack){
-				obj = obj.evalFully(stack);
-				property = property.evalFully(stack);
+				stack.doOnStack(this,obj,stack=>{
+					obj = obj.evalFully(stack);
+				});
+				stack.doOnStack(this,property,stack=>{
+					property = property.evalFully(stack);
+				});
 				getIndex:if(property instanceof Float){
 					if(obj instanceof List)return obj[property|0]??List.null;
 					if(obj instanceof NameSpace)break getIndex;
@@ -501,15 +516,15 @@ const TEST = false;
 			},2);
 			static assign_id = new FilelessWordData({word:"assign part"});
 			static set = new class NameSpace_Set extends MultiArgLambdaFunc{}(function([nameSpace,property,value],context,stack){
-				return stack.doOnStack(new Exp({id:NameSpace.assign_id}),stack=>{
+				return stack.doOnStack(new Exp({id:NameSpace.assign_id}),undefined,stack=>{
 					const tryAgain = ()=>new Lazy(new this.constructor(this.func,this.len,[nameSpace,property],this.id),value);
-					if(Lazy.isReducable(property))property = stack.doOnStack(NameSpace.assign_id,stack=>property.eval(stack));
+					if(Lazy.isReducable(property))property = stack.doOnStack(NameSpace.assign_id,property,stack=>property.eval(stack));
 					if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
 					if(Lazy.isReducable(property))return tryAgain();
 					else {
 						if(property instanceof Float && !(nameSpace instanceof NameSpace)){
 							property = +property;
-							if(Lazy.isReducable(nameSpace))nameSpace = stack.doOnStack(NameSpace.assign_id,stack=>nameSpace.eval(stack));
+							if(Lazy.isReducable(nameSpace))nameSpace = stack.doOnStack(NameSpace.assign_id,nameSpace,stack=>nameSpace.eval(stack));
 							if(Lazy.isReducable(nameSpace))return tryAgain();
 							if(nameSpace instanceof List){
 								let newList = Object.assign(new List(...nameSpace),{id:nameSpace.id});
@@ -662,7 +677,7 @@ const TEST = false;
 				list:new FilelessWordData({word:"List_list"})
 			};
 			static map = new class List_Map extends MultiArgLambdaFunc{}(
-				([list,foo],context,stack)=>stack.doOnStack(List.map,stack=>
+				([list,foo],context,stack)=>stack.doOnStack(List.map,foo,stack=>
 					(list=this.toList(list,stack)) instanceof List?
 						 Object.assign(
 							list.map(
@@ -679,7 +694,7 @@ const TEST = false;
 			,2);
 			//similar to Int(), same as 'l>f>x>l.length ([s i a]>[f[s l.(i) i a] ++i a])[x 0 l]'
 			static forEach = new class List_Map extends MultiArgLambdaFunc{}(
-				([list,foo,startingState],context,stack)=>stack.doOnStack(List.map,stack=>
+				([list,foo,startingState],context,stack)=>stack.doOnStack(List.forEach,foo,stack=>
 					(list=this.toList(list,stack)) instanceof List?list.reduce(
 						(s,v,i,a)=>foo.call(
 							Object.assign(new List(s,v,Object.assign(new Int(i),this.#spairIDs.int),a),this.#spairIDs.list),
@@ -690,7 +705,7 @@ const TEST = false;
 			,3);
 			//same as 'l>f>l.length ([s i a]>[f[s l.(i) i a] ++i a])[l.(0) 0 l]'
 			static reduce = new class List_Map extends MultiArgLambdaFunc{}(
-				([list,foo],context,stack)=>stack.doOnStack(List.map,stack=>
+				([list,foo],context,stack)=>stack.doOnStack(List.map,foo,stack=>
 					(list=this.toList(list,stack)) instanceof List?list.reduce(
 						(s,v,i,a)=>foo.call(
 							Object.assign(new List(s,v,Object.assign(new Int(i),this.#spairIDs.int),a),this.#spairIDs.list),
@@ -733,11 +748,11 @@ const TEST = false;
 			value = undefined;//:Exp?
 			isReducable=false;//:bool ; is set to true when the promise resolves.
 			call(arg,context,stack){
-				if(this.isReducable)return stack.doOnStack(this,stack=>[...this.callList,arg].reduce((s,v)=>s.call(v,context,stack),this.value));
+				if(this.isReducable)return stack.doOnStack(this,arg,stack=>[...this.callList,arg].reduce((s,v)=>s.call(v,context,stack),this.value));
 				else return new this.constructor(this.promise,[...this.callList,arg]);
 			}
 			eval(stack){
-				if(this.isReducable)return stack.doOnStack(this,stack=>value.call());
+				if(this.isReducable)return stack.doOnStack(this,arg,stack=>value.call());
 				else return this;
 			}
 		}
@@ -971,7 +986,7 @@ const TEST = false;
 					["eval",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s):v)],
 					["evalFully",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.evalFully(s):v)],
 					["do",new MultiArgLambdaFunc(([value,then],c,stack)=>{value[
-						Exp.symbol]?stack.doOnStack(stack=>value.eval(stack)):value;
+						Exp.symbol]?stack.doOnStack(this,value,stack=>value.eval(stack)):value;
 						return then;
 					},2)],
 				]))],
@@ -1528,14 +1543,14 @@ const TEST = false;
 							}
 							let startLabels=bracketParent.startLabels;
 							let i=0;
-							match.value = new Lazy;//single value, represents the right side of the assignment.
+							match.value = [];//single value, represents the right side of the assignment.
 							for(let param of match.params){//param:Param
 								if(!startLabels.has(param.name[0]))startLabels.set(param.name[0],param);
 								param.value = match.value;
 							}
 						}
 						else if(match.type == "property_assignment"){
-							match.value = new Lazy;
+							match.value = [];
 						}
 						else if(match.type == "function"){//'>' ; assume pre-fix
 							if(match.pattern==">")match.startLabels = new Map(match.params.map(v=>[v.name[0],v]));
@@ -1563,7 +1578,8 @@ const TEST = false;
 								match.value = [];
 							}
 							if(match.pattern=="[]"){
-								match.value = new List;
+								match.value = [];
+								match.value.isList = true;//is converted to a list at the end
 							}
 							if(match.pattern=="{}"){
 								match.value = [];
@@ -1619,7 +1635,7 @@ const TEST = false;
 								let {param,parents} = getParam(match.arg,match.parent)??{};
 								if(match.type=="number"){
 									if(!param){//if not overwritten && is number literal '1'
-										match.value = new Int(parseNumber(match.arg));
+										match.value = Object.assign(new Int(parseNumber(match.arg)),{id:match.id});
 									}
 								}
 								else if(match.type=="string"){
@@ -1690,11 +1706,11 @@ const TEST = false;
 					//parses 'a.b' where b is a label
 					for(let [match,i,bracketParent] of forEachPattern()){
 						if(match.pattern=="::"){
-							match.value.recur = Object.assign(new Lazy(match.value.shift()),{id:match.list[0].id});
+							match.value.recur = Object.assign([match.value.shift()],{id:match.list[0].id});
 						}
 						else if(match.pattern=="." && match.params?.length==1){
 							let [word,id] = match.params[0].name;
-							if(match.options == "number"){
+							if(match.options == "index"){
 								match.value[0] = List.get;
 								match.value.push(Object.assign(new Int(parseNumber(word)),{id}))
 							}
@@ -1768,11 +1784,6 @@ const TEST = false;
 							}
 						}
 					}
-					for(let [match,i,bracketParent] of forEachPattern()){
-						if(match.pattern=="[]"){
-							match.value.forEach((v,i,a)=>a[i]=Object.assign(new Lazy(v),{id:undefined}));//v.constructor==Array?Object.assign(new Lazy(),v):v)
-						}
-					}
 					//remove single commas 'a,b' -> 'a (b)' -> 'a b'
 					for(let [match,i,bracketParent] of forEachPattern()){
 						if(match.pattern==","){
@@ -1785,7 +1796,7 @@ const TEST = false;
 					}
 					//parse null values and simplify expressions: '()' -> `Lambda.null`
 					for(let [match,i,bracketParent] of forEachPattern()){
-						if(Lazy.isTypeReducable(match.value)&& match.value.length==0){
+						if(Lazy.isTypeReducable(match.value)&& match.value.length==0 || match.value instanceof Lambda){
 							let index = match.parent.value.indexOf(match.value);
 							if(index!=-1)//may of already been removed ealier
 								match.value.labels?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
@@ -1800,7 +1811,8 @@ const TEST = false;
 					context.value.forEach(function forEach(v,i,a){
 						if(v instanceof RecurSetter)forEach(v.recur);
 						else if(v instanceof Reference)forEach(v.value);
-						else if(v instanceof NameSpace)v.labels.forEach(v=>forEach(v.value));
+						//else if(v instanceof NameSpace)throw Error("compiler error: illegal type in source code")//v.labels.forEach(v=>forEach(v.value));
+						//else if(v instanceof List)throw Error("compiler error: illegal type in source code")//v.labels.forEach(v=>forEach(v.value));
 						else if(v instanceof Array){
 							if(v.length == 0 && !v.labels)throw Error("compiler error: non-nulled empty list found"+(console.log(v,i)??""));
 							v.forEach(forEach);

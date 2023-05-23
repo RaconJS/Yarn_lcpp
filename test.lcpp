@@ -1,3 +1,16 @@
-{log toJS evalFully} = global,
-log = a>(log, toJS a,()),
-log 3
+{log toJS evalFully eval} = global,
+log = a>(log,(evalFully a),a),
+fact = n>(
+	n
+	(
+		a>
+			(a\\$1)
+			b>
+				log b
+				((a\\$1)*(a\\$0))
+				(++(a\\$0))
+	)
+	b>b 1 1,
+),
+c,
+c = fact 2,
