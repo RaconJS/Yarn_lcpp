@@ -149,11 +149,17 @@ const TEST = false;
 				return exp==undefined?false:((exp instanceof Lazy || exp.constructor==Array)&& !(exp.length==1 && exp[0] instanceof Lambda));
 			}
 			static isReducable(exp){
-				return exp instanceof NameSpace?this.isReducable(exp.exp):
+				return !exp?.[Exp.symbol]?false:
+					exp instanceof NameSpace?this.isReducable(exp.exp):
+					//exp?.constructor == Array?(!exp.isList && !exp?.labels):
 					exp instanceof AsyncExp?exp.isReducable():
-					exp instanceof RecurSetter||this.isTypeReducable(exp)||exp?.labels;
+					exp instanceof RecurSetter||this.isTypeReducable(exp);
 			}
-			isSimplyReducable(exp){return exp instanceof NameSpace?false:this.constructor.isTypeReducable(exp)&&!exp.labels}
+			isSimplyReducable(exp){//exp:Exp|Array|any
+				return exp instanceof NameSpace?false:
+				exp?.constructor == Array?(!exp.isList && !exp?.labels):
+				this.constructor.isTypeReducable(exp);
+			}
 			//static isReducable(exp){return (exp instanceof Lazy || exp.constructor==Array &&!exp.labels)}
 			eval(stack=new Stack()){
 				const context = this.context??new Context();
@@ -194,7 +200,7 @@ const TEST = false;
 					})(v):*/
 					v//uncallable object
 				);
-				ans = this.isList?new List(...ans):
+				ans = this.isList?Object.assign(new List(...ans),{id:this.id}):
 					ans.reduce((s,v)=>
 						stack.doOnStack(s,v,stack=>s.call(v,context,stack))
 					)
@@ -208,7 +214,8 @@ const TEST = false;
 				}
 				{//optimise for next time.
 					this.splice(0,this.length,ans);
-					if(this.labels)this.labels = undefined;
+					this.labels = undefined;
+					this.isList = undefined;
 				}return ans;
 			}
 			//; Lazy.evalFully
@@ -643,8 +650,8 @@ const TEST = false;
 			}
 			call(arg,context,stack){
 				let id = this.id;
-				return Object.assign(new this.constructor.#ListWithEnd(this,arg),{id});
-				this.constructor.concat.call(this,context,stack).call(arg,context,stack);
+				return new this.constructor.#ListWithEnd(this,arg,id);
+				//this.constructor.concat.call(this,context,stack).call(arg,context,stack);
 			}
 			eval(){return this}
 			toJS(){return [...this.map(v=>v[Exp.symbol]?v.evalFully().eval().toJS():v)]}
@@ -812,8 +819,10 @@ const TEST = false;
 					//
 					usingLabels;//:?string[] if '()>'|Map(String,Param) if '()=>'; for '()>' and '()=>'
 			}
+			let num=0;//is for TESTING and debugging only
 			class BracketPattern extends Pattern{
-				constructor(data){super();Object.assign(this,data)}
+				constructor(data){super();this.num = num++;Object.assign(this,data);}
+				num=0;
 				parent;
 				pattern='()';//'()'|'[]'|'{}'
 				list=[];//:Tree<Pattern> ; brackets only
@@ -844,6 +853,11 @@ const TEST = false;
 					firstValue;//:simple|null
 				//on '()=' only
 					withBlock_isLeftArg;//:bool ; 
+				//used by the `refs` object only
+					//refs:Map(Pattern&!Simple => Simple[])
+					//isSearched:bool,
+					//pathNumber:Number,
+
 			}
 			class Param{
 				constructor(data){Object.assign(this,data)}
@@ -1223,7 +1237,44 @@ const TEST = false;
 						if(extraSycleAtTheEnd)yield[extraSycleAtTheEnd,tree.length,context,tree];
 					}
 					const forEachPattern = (extraSycleAtTheEnd=null)=>forEachTree(context,v=>v?.list??[],extraSycleAtTheEnd);
+					const refs = {
+						//type Param:{refs:Set(Param),isSearched:bool,pathNumber:Number},
+						graphs:new Set,//:Set(Param) & superset of directed graph heads where (graphs : Param[]) and (graphs[x].refs : Param)
+						addReference(higherArgParent,higherParamParent,match){//links param 'a =' to arg 'a'
+							{
+								//assert: this.graphs will be a superset of all the heads of the graph.
+								//note: adding a smart system here that filters Params are added to `this.graphs` would make the program slower
+							}
+							this.graphs.add(higherArgParent);
+							higherArgParent.refs??=new Map;//:Map(Param => Pattern[]);
+							let matches;
+							if(!(matches = higherArgParent.refs.get(higherParamParent)))higherArgParent.refs.set(higherParamParent,matches=[]);
+							matches.push(match);
+						},
+						checkRefs(){
+							//checks for reference cycles (aka loops)
+							this.graphs.forEach(v=>function checkGraph(reference,path=[]){//reference:Pattern
+								if(!reference.isSearched && reference.refs){
+									reference.isSearched = true;
+									reference.pathNumber = path.length;
+									path.push(reference);
+									reference.refs.forEach((matches,assignmentPattern)=>{//assignmentPattern:Pattern
+										if(assignmentPattern.pathNumber!=undefined){
+											let match = matches[0];
+											let loopSize = path.length-assignmentPattern;
+											match.id.throwError("illegal reference", "complex recursive/self reference, of size "+loopSize+", detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
+										}
+										checkGraph(assignmentPattern,path);
+									});
+									path.pop(reference);
+									reference.pathNumber = undefined;
+								}
+								//assert: argument has the lowest `argument.refLevel` in the argument's subgraph. Otherwise `throwError` should be called
+							}(v));
+						}
+					};
 					function addRefParam(match,match_parents,param){
+						//forms a graph of `=` references. This graph is unrelated to the `new Pattern().list` tree.
 						//match:Pattern
 						//match_parents:Set(BracketPattern)?
 						//param:Param
@@ -1248,21 +1299,10 @@ const TEST = false;
 						if(!higherArgParent)throw Error("compiler error");
 						if(higherParamParent.parent!=higherArgParent.parent)throw Error("compiler error");
 						{//check for and prevent reference loops
-							if(higherParamParent.refs?.has?.(higherArgParent))match.id.throwError("illegal reference", "recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a))
+							if(higherParamParent.refs?.has?.(higherArgParent))match.id.throwError("illegal reference", "recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
 						}
-						//note:
-							//From now on only things from block 'arg' can reference block 'param'
-							//and never the other way around.
-							//Otherwise a reference error is thrown.
-						//----
 						//adds new reference.
-						if(!higherArgParent.refs){
-							higherArgParent.refs=new Set;//:Set(Pattern)
-							higherArgParent.refLevel??=(higherParamParent.refLevel??-1)+1;
-							higherParamParent.refLevel??=higherArgParent.refLevel-1;
-						}
-						if(higherArgParent.refLevel<=higherParamParent.refLevel)match.id.throwError("illegal reference", "complex recursive/self reference, detected using label '"+match.arg+"'. These are not allowed",a=>Error(a));
-						higherArgParent.refs.add(higherParamParent);
+						refs.addReference(higherArgParent,higherParamParent,match);
 					}
 					function getParam(name,parent,parents=[],stopAtUseBlocks=false){//parents:Pattern[]?
 						//Errors:
@@ -1539,7 +1579,6 @@ const TEST = false;
 							{//set up assignment properties
 								bracketParent.startLabels ??= new Map();//String|Number => Param
 								bracketParent.currentLabels ??= new Map();
-								bracketParent.refs ??= new Set();//:Set(BracketPattern) where p.refs.get(x).refs.get(p) == undefined
 							}
 							let startLabels=bracketParent.startLabels;
 							let i=0;
@@ -1689,6 +1728,7 @@ const TEST = false;
 						}
 						else if(match.pattern!=undefined) throw Error("compiler error: '"+match.type+"' haven't enumerated all possibilities");
 					}
+					refs.checkRefs();
 					//handle references to null values
 					for(let [match,i,bracketParent] of forEachPattern()){
 						if(match.pattern == "="){
@@ -1796,7 +1836,7 @@ const TEST = false;
 					}
 					//parse null values and simplify expressions: '()' -> `Lambda.null`
 					for(let [match,i,bracketParent] of forEachPattern()){
-						if(Lazy.isTypeReducable(match.value)&& match.value.length==0 || match.value instanceof Lambda){
+						if((Lazy.isTypeReducable(match.value)|| match.value instanceof Lambda) && match.value.length==0){
 							let index = match.parent.value.indexOf(match.value);
 							if(index!=-1)//may of already been removed ealier
 								match.value.labels?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
@@ -1866,8 +1906,7 @@ const TEST = false;
 //only do it in nodeJS
 if(!globalThis.window)require("fs").readFile(process.argv[2]??"./test.lcpp","utf8",(err, data) => {
 	if(!err)tryCatch(()=>{//λ
-		compile(data)//.call(JSintervace)
-		.evalFully()
+		loga(compile(data).evalFully())
 	});
 	else console.log(error)
 });

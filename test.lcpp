@@ -1,16 +1,34 @@
-{log toJS evalFully eval} = global,
+{evalFully toJS} = global,
+evalFully 1
+/*{log toJS evalFully eval} = global,
 log = a>(log,(evalFully a),a),
-fact = n>(
+true = \\$1,
+false = \\$0,
+fact1 = n>(
 	n
 	(
 		a>
-			(a\\$1)
 			b>
-				log b
-				((a\\$1)*(a\\$0))
-				(++(a\\$0))
+				b
+				((a true)*(a false))
+				(++(a false))
 	)
 	b>b 1 1,
+	true
 ),
-c,
-c = fact 2,
+fact2 = n>(
+	(
+		n
+		([s i]> [s*i,++i]),
+		[1 1]
+	).1
+),
+
+bs = n>(
+	(
+		n
+		([s i]> [0,++i]),
+		[1 1]
+	).1
+),
+log,(bs 2)*/
