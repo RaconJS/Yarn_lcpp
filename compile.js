@@ -145,35 +145,36 @@ const TEST = false;
 				if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
 				else return this.eval(stack).call(arg,this.context,stack);
 			}//(a>a)(a>a a)
-			static isTypeReducable(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
-				return exp==undefined?false:((exp instanceof Lazy || exp.constructor==Array)&& !(exp.length==1 && exp[0] instanceof Lambda));
+			static isTypeReducible(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
+				//isLazyEvalType
+				return exp instanceof Lazy || exp instanceof Reference || exp instanceof RecurSetter;
 			}
-			static isReducable(exp){
+			static isReducible(exp){
 				return !exp?.[Exp.symbol]?false:
-					exp instanceof NameSpace?this.isReducable(exp.exp):
+					exp instanceof NameSpace?this.isReducible(exp.exp):
 					//exp?.constructor == Array?(!exp.isList && !exp?.labels):
-					exp instanceof AsyncExp?exp.isReducable():
-					exp instanceof RecurSetter||this.isTypeReducable(exp);
+					exp instanceof AsyncExp?exp.isReducible():
+					exp instanceof Lazy?!(exp.length==1 && exp[0] instanceof Lambda && !exp.isList && !exp.labels):
+					exp instanceof RecurSetter||this.isTypeReducible(exp);
 			}
-			isSimplyReducable(exp){//exp:Exp|Array|any
-				return exp instanceof NameSpace?false:
-				exp?.constructor == Array?(!exp.isList && !exp?.labels):
-				this.constructor.isTypeReducable(exp);
+			isSimplyReducible(exp){//exp:Exp|Array|any ; returns true if exp is valid to be parsed as `ans` in the `ans.map` part of `Lazy.prototype.eval``.
+				return (exp?.constructor == Array||exp instanceof Lazy) && exp.length==1 && (!exp.isList && !exp.labels) && (exp[0]?.constructor == Array||exp[0] instanceof Lazy);
 			}
-			//static isReducable(exp){return (exp instanceof Lazy || exp.constructor==Array &&!exp.labels)}
+			//static isReducible(exp){return (exp instanceof Lazy || exp.constructor==Array &&!exp.labels)}
 			eval(stack=new Stack()){
 				const context = this.context??new Context();
+				let startExp = this;
 				let ans = this;
 				{
 					//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
-					while(ans.length==1 && this.isSimplyReducable(ans[0]))ans=ans[0];//assume: ans is Tree
-					//ans:Lazy|Array
-					if(ans.length == 0 && !ans.labels||ans.list)
+					while(this.isSimplyReducible(startExp))startExp=startExp[0];//assume: startExp is Tree
+					//startExp:Lazy|Array
+					if(startExp.length == 0 && !startExp.labels&&!startExp.isList)
 						if(1)throw Error("compiler error: all null values should be delt with at compile time");
 						else return Lambda.null;
 				}
 				//note this.map first calls 'new Lazy(this.length)' which is overwriten if there is at least 1 item in the expression.
-				ans = ans.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack,Number)->Lazy}}[]
+				ans = startExp.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack,Number)->Lazy}}[]
 					typeof v == "number"?context.getValue(v):
 					typeof v == "string"?v://simple raw string cannot be called
 					//typeof v == "string"?:
@@ -200,32 +201,34 @@ const TEST = false;
 					})(v):*/
 					v//uncallable object
 				);
-				ans = this.isList?Object.assign(new List(...ans),{id:this.id}):
+				//if(!startExp.id)throw Error("compiler error: list or lazy expression without an id");
+				ans = startExp.isList?Object.assign(new List(...ans),{id:startExp.id||this.id}):
 					ans.reduce((s,v)=>
 						stack.doOnStack(s,v,stack=>s.call(v,context,stack))
 					)
 				;
-				if(this.labels){
+				if(startExp.labels){
 					let newLabels = new Map();
-					for(let [i,v] of this.labels){
+					for(let [i,v] of startExp.labels){
 						newLabels.set(i,Object.assign(new Lazy(v),{context}).eval(stack));
 					}
 					ans = Object.assign(new NameSpace(newLabels,ans),{id:ans.id});
 				}
-				{//optimise for next time.
+				if(ans!=this){//optimise for next time.
 					this.splice(0,this.length,ans);
 					this.labels = undefined;
 					this.isList = undefined;
-				}return ans;
+				}
+				return ans;
 			}
 			//; Lazy.evalFully
 			evalFully(stack=new Stack()){
 				let ans = this;
 				let bail =100000;
-				while(Lazy.isReducable(ans)&&bail-->0)
+				while(Lazy.isReducible(ans)&&bail-->0)
 					ans = ans.eval(stack);
 				if(bail<=0)throw Error("possible compiler error: bailled. may be caused by:"
-					+"1. A compiler bug: probably within the Lazy.isReducable function, or somethere else in the code"
+					+"1. A compiler bug: probably within the Lazy.isReducible function, or somethere else in the code"
 					+"2. An expression that takes many steps to evaluate;"
 					+"3. An expression that cannot be fully reduced (i.e. one that does not have a reduced form)"
 				);
@@ -235,7 +238,7 @@ const TEST = false;
 				return this.constructor.toInt(foo,stack);
 			}
 			static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
-				//if(Lazy.isReducable(foo))return new Lazy(Exp.eval(foo,foo,stack,1));
+				//if(Lazy.isReducible(foo))return new Lazy(Exp.eval(foo,foo,stack,1));
 				foo = foo.evalFully(stack);
 				if(foo instanceof Int)return foo;
 				const inc = Int.increment;
@@ -473,7 +476,7 @@ const TEST = false;
 			}
 			eval(stack){
 				stack??=new Stack();
-				if(!Lazy.isReducable(this.exp))return this;
+				if(!Lazy.isReducible(this.exp))return this;
 				let exp=stack.doOnStack(this,undefined,stack=>this.exp.eval(stack));
 				if(exp instanceof NameSpace)return new NameSpace(new Map([...this.labels,...exp.labels]));
 				return new NameSpace(this.labels,exp);
@@ -525,14 +528,14 @@ const TEST = false;
 			static set = new class NameSpace_Set extends MultiArgLambdaFunc{}(function([nameSpace,property,value],context,stack){
 				return stack.doOnStack(new Exp({id:NameSpace.assign_id}),undefined,stack=>{
 					const tryAgain = ()=>new Lazy(new this.constructor(this.func,this.len,[nameSpace,property],this.id),value);
-					if(Lazy.isReducable(property))property = stack.doOnStack(NameSpace.assign_id,property,stack=>property.eval(stack));
+					if(Lazy.isReducible(property))property = stack.doOnStack(NameSpace.assign_id,property,stack=>property.eval(stack));
 					if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
-					if(Lazy.isReducable(property))return tryAgain();
+					if(Lazy.isReducible(property))return tryAgain();
 					else {
 						if(property instanceof Float && !(nameSpace instanceof NameSpace)){
 							property = +property;
-							if(Lazy.isReducable(nameSpace))nameSpace = stack.doOnStack(NameSpace.assign_id,nameSpace,stack=>nameSpace.eval(stack));
-							if(Lazy.isReducable(nameSpace))return tryAgain();
+							if(Lazy.isReducible(nameSpace))nameSpace = stack.doOnStack(NameSpace.assign_id,nameSpace,stack=>nameSpace.eval(stack));
+							if(Lazy.isReducible(nameSpace))return tryAgain();
 							if(nameSpace instanceof List){
 								let newList = Object.assign(new List(...nameSpace),{id:nameSpace.id});
 								if(!isNaN(property)&&Math.abs(property)!=Infinity&&property>=0)newList[property|0] = value;
@@ -747,19 +750,19 @@ const TEST = false;
 				this.promise = promise;
 				promise.then(value=>{
 					this.value = value;
-					this.isReducable = true;
+					this.isReducible = true;
 				});
 				this.callList = callList??[];
 			}
 			id;//:ID
 			value = undefined;//:Exp?
-			isReducable=false;//:bool ; is set to true when the promise resolves.
+			isReducible=false;//:bool ; is set to true when the promise resolves.
 			call(arg,context,stack){
-				if(this.isReducable)return stack.doOnStack(this,arg,stack=>[...this.callList,arg].reduce((s,v)=>s.call(v,context,stack),this.value));
+				if(this.isReducible)return stack.doOnStack(this,arg,stack=>[...this.callList,arg].reduce((s,v)=>s.call(v,context,stack),this.value));
 				else return new this.constructor(this.promise,[...this.callList,arg]);
 			}
 			eval(stack){
-				if(this.isReducable)return stack.doOnStack(this,arg,stack=>value.call());
+				if(this.isReducible)return stack.doOnStack(this,arg,stack=>value.call());
 				else return this;
 			}
 		}
@@ -929,10 +932,10 @@ const TEST = false;
 				["||",  i,new Lambda(new Lambda(1,1,0)),2],
 				["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
 				["=" ,  i,new MultiArgLambdaFunc(function([nameSpace,property,value],context,stack){
-					if(Lazy.isReducable(property) )property = property.eval(stack);
+					if(Lazy.isReducible(property) )property = property.eval(stack);
 					if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
-					if(Lazy.isReducable(nameSpace))nameSpace = nameSpace.eval(stack);
-					if(Lazy.isReducable(nameSpace)||Lazy.isReducable(property))
+					if(Lazy.isReducible(nameSpace))nameSpace = nameSpace.eval(stack);
+					if(Lazy.isReducible(nameSpace)||Lazy.isReducible(property))
 						return Object.assign(new Lazy(this,nameSpace.eval(stack),property.eval(stack)),{context,id:assign_id});
 					else {
 						if(property instanceof Float && !(nameSpace instanceof NameSpace)){
@@ -1836,12 +1839,12 @@ const TEST = false;
 					}
 					//parse null values and simplify expressions: '()' -> `Lambda.null`
 					for(let [match,i,bracketParent] of forEachPattern()){
-						if((Lazy.isTypeReducable(match.value)|| match.value instanceof Lambda) && match.value.length==0){
+						if((Lazy.isTypeReducible(match.value)|| match.value instanceof Lambda) && match.value.length==0){
 							let index = match.parent.value.indexOf(match.value);
 							if(index!=-1)//may of already been removed ealier
 								match.value.labels||match.value.isList?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
 						}
-						if(match.value instanceof NameSpace && Lazy.isTypeReducable(match.value?.exp) && match.exp?.value?.length==0){
+						if(match.value instanceof NameSpace && Lazy.isTypeReducible(match.value?.exp) && match.exp?.value?.length==0){
 							if(match.value.exp.labels && match.value.exp.constructor == Array)match.value.exp = Lambda.null;
 							else match.value.exp.push(Lambda.null);
 						}
