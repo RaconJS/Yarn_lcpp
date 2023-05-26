@@ -1839,10 +1839,10 @@ const TEST = false;
 						if((Lazy.isTypeReducable(match.value)|| match.value instanceof Lambda) && match.value.length==0){
 							let index = match.parent.value.indexOf(match.value);
 							if(index!=-1)//may of already been removed ealier
-								match.value.labels?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
+								match.value.labels||match.value.isList?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
 						}
 						if(match.value instanceof NameSpace && Lazy.isTypeReducable(match.value?.exp) && match.exp?.value?.length==0){
-							if(match.value.exp.labels)match.value.exp = Lambda.null;
+							if(match.value.exp.labels && match.value.exp.constructor == Array)match.value.exp = Lambda.null;
 							else match.value.exp.push(Lambda.null);
 						}
 					}

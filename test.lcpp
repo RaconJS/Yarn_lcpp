@@ -1,5 +1,5 @@
 {evalFully toJS} = global,
-evalFully 1
+[]
 /*{log toJS evalFully eval} = global,
 log = a>(log,(evalFully a),a),
 true = \\$1,
