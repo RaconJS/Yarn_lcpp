@@ -1,4 +1,4 @@
-a>a/*{log toJS evalFully eval} = global,
+{log toJS evalFully eval} = global,
 log = a>(log,(evalFully a),a),
 true = \\$1,
 false = \\$0,
@@ -19,7 +19,7 @@ fact2 = n>(
 		n
 		([s i]> [s*i,++i]),
 		[1 1]
-	).1
+	).0
 ),
 
 bs = n>(
@@ -29,4 +29,4 @@ bs = n>(
 		[1 1]
 	).1
 ),
-log,(bs 2)*/
+log,(fact2 5)
