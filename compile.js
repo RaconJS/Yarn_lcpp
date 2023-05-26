@@ -180,7 +180,7 @@ const TEST = false;
 					//typeof v == "string"?:
 					v instanceof Lambda?Object.assign(new Lazy(v),{context,id:v.id}):
 					v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{...v,context,id:v.id}):
-					v instanceof Reference?Object.assign(new Lazy(v.value),{id:v.id,context:context.getContext(v.levelDif)}):
+					v instanceof Reference?Object.assign(new Lazy(...v),{id:v.id,context:context.getContext(v.levelDif)}):
 					v instanceof Lazy?v.context?v:Object.assign(new Lazy(...v),{...v,context}):
 					v instanceof Float?v:
 					v instanceof Int?v://assume (Int extends Float) or (Float extends Int)
@@ -286,24 +286,28 @@ const TEST = false;
 			toJS(){return this[0].toJS?.()}
 			static forever = new Lambda(new Lambda(0));
 		}
-		class Reference extends Exp{//wrapper for Lazy
-			constructor(value,levelDif,id){
-				super();
-				this.value=value;//:Exp
-				this.levelDif=levelDif;//:Number
-				this.id = id;//:WordData
+		class Reference extends Exp_Array{//wrapper for Lazy
+			constructor(value){
+				super(1);
+				this[0]=value;
 			}
+			//value:Exp
+			levelDif//:Number
+			id//:WordData
+			get value(){return this[0]}
+			set value(v){this[0]=v}
 			call(arg,context=new Context,stack){
 				//context??= new Context();
 				stack.unshift(this.id);
-				let value = Object.assign(new Lazy,this.value);
+				let value = new Lazy(...this);
+				value.id = this.id;
 				value.context=context.getContext(this.levelDif);
 				let ans = value.call(arg,context,stack);
 				stack.shift();
 				return ans;
 			}
-			eval(stack){return this.value.eval(stack);}
-			toJS(){return this.value.toJS?.()}
+			eval(stack){return this[0].eval(stack);}
+			toJS(){return this[0].toJS?.()}
 		};
 		class Context{
 			static null;//:Context
@@ -1626,6 +1630,7 @@ const TEST = false;
 							}
 							if(match.pattern=="{}"){
 								match.value = [];
+								match.value.labels = new Map;
 							}
 						}
 						if(match.value){
@@ -1659,7 +1664,9 @@ const TEST = false;
 							}
 							const isCode = !!match.options.includes(">");
 							if(isCode){
-								match.parent.value.push(Object.assign(match.params.map(v=>new Reference(v.value,0,v.id)),{id:match.id}));
+								if(match.options[0]=="{")match.parent.value.push(Object.assign([],{id:match.id,labels:new Map( match.params.map(v=>[v.name[0],Object.assign(new Reference(v.value),{levelDif:0,id:v.id})]) )}));
+								else if(match.options[0]=="[")match.parent.value.push(Object.assign(match.params.map(v=>Object.assign(new Reference(v.value),{levelDif:0,id:v.id})),{id:match.id,isList:true}));
+								else match.parent.value.push(match.value);
 								match.isUsed = true;
 							}
 						}
@@ -1712,6 +1719,10 @@ const TEST = false;
 									if(param.owner.publicLabels){
 										for(let [i,v] of param.owner.publicLabels)
 											setPublicLabel(match.parent,v,false,true);
+									}
+									if(match.parent.pattern=="{}"){//BODGED: only supports the '{a b c}' versions of '{}' and not e.g.'{a,b c (a>a a)}'
+										match.value.publicLabels
+										throw Error ("compiler Error: namespace literals '{ }' are not supported yet.");
 									}
 								}
 							}
