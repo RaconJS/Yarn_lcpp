@@ -18,7 +18,7 @@ const TEST = false;
 			eval(stack){return this}//lazy evaluatuation
 			evalFully(stack){return (this instanceof Lazy?this:new Lazy(this)).evalFully(stack)}//non-lazy evaluation
 			toJS(){return Object.assign((...args)=>args.reduce((s,v)=>s.call(v),this),{})}
-			static eval(exp,ownerExp,stack,times=1){
+			static eval(exp,ownerExp,stack=new Stack,reps=1){
 				for(let i=0;i<reps;i++)
 					exp=exp?.[Exp.symbol]?stack?stack.doOnStack(ownerExp,exp,stack=>exp.eval(stack)):exp.eval():exp;
 				return exp;
@@ -586,6 +586,7 @@ const TEST = false;
 				lazyExpVersion=new Lambda(new Lambda(new Lambda(1,[2,1,0])));
 			};
 			call(arg_f){//f>x>
+				if(Exp.eval(arg_f,this) instanceof Float)return new this.constructor(arg_f**this);
 				return new this.constructor.Part1(this,arg_f);
 			}
 			eval(){return this}
@@ -1839,14 +1840,12 @@ const TEST = false;
 					}
 					//parse null values and simplify expressions: '()' -> `Lambda.null`
 					for(let [match,i,bracketParent] of forEachPattern()){
-						if((Lazy.isTypeReducible(match.value)|| match.value instanceof Lambda) && match.value.length==0){
-							let index = match.parent.value.indexOf(match.value);
-							if(index!=-1)//may of already been removed ealier
-								match.value.labels||match.value.isList?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
-						}
-						if(match.value instanceof NameSpace && Lazy.isTypeReducible(match.value?.exp) && match.exp?.value?.length==0){
-							if(match.value.exp.labels && match.value.exp.constructor == Array)match.value.exp = Lambda.null;
-							else match.value.exp.push(Lambda.null);
+						if([Lambda,Array,RecurSetter,Reference].includes(match.value.constructor)){
+							if(match.value.length==0){//match.value:Array|Lambda|RecurSetter
+								let index = match.parent.value.indexOf(match.value);
+								if(index!=-1)//may of already been removed ealier
+									match.value.labels||match.value.isList?match.value.push(Lambda.null):match.parent.value.splice(index,1,Lambda.null);
+							}
 						}
 					}
 					if(context.value.length==0)context.value.push(Lambda.null);//
@@ -1909,7 +1908,7 @@ const TEST = false;
 //only do it in nodeJS
 if(!globalThis.window)require("fs").readFile(process.argv[2]??"./test.lcpp","utf8",(err, data) => {
 	if(!err)tryCatch(()=>{//λ
-		loga(compile(data).evalFully())
+		(compile(data).evalFully())
 	});
 	else console.log(error)
 });
