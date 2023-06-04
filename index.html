@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title></title>
+</head>
+<body>
+	<textarea id = "input"></textarea>
+	<pre id = "output"></pre>
+	<canvas id = "canvas"></canvas>
+	<script src="compile.js"></script>
+	<script>
+		window.error="";
+		var loopFrames = (60/20)|0;
+		window.ctx = canvas.getContext("2d");
+		let loop = async()=>{
+			let timer = 0;
+			while(true)await new Promise((resolve,reject)=>
+				window.requestAnimationFrame(()=>{
+					if((timer=(timer+1)%loopFrames)!=0){resolve();return}
+					let ans;
+					files.reset();
+					let ans1 = tryCatch(()=>compile(input.value,null).evalFully(),error=>ans=window.error=error,compile("","null"));
+					window.ans=ans1;
+					if(compile.isExpression(ans1))try{ans1 = JSON.stringify(ans1);}catch(e){console.log(ans1);throw e}
+					ans ??= ans1;
+					output.innerText = ans;
+					resolve();
+				})
+			);
+		};
+		loop();
+	</script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+b = a,b a = λ0
 {log toJS evalFully eval} = global,
 log = a>(log,(evalFully a),a),
 true = \\$1,
@@ -21,7 +22,7 @@ fact2 = n>(
 		[1 1]
 	).0
 ),
-
+fact3 = (a>a a)(f>x>x==0 1 (x * (f f (--x)))),
 bs = n>(
 	(
 		n
@@ -29,4 +30,17 @@ bs = n>(
 		[1 1]
 	).1
 ),
-log,(fact2 5)
+//log,(fact3 10)
+run[
+ (ctx).fillStyle = "white",
+ (ctx).fillRect 0 0 2000 1000,
+ (ctx).fillStyle = "blue",
+ pos = (a>a)10,
+ (ctx).fillRect (0) (100*(toExp,window.Math.sin (evalFully t/1000))) 20 20,
+](a>a),
+ t = toExp (window.time a>a),
+(100*(toExp,window.Math.sin (evalFully t/1000)))
+{toJS evalFully toExp} = global,
+run =l>(global)= do (evalFully,l.reduce[s v]>(do,evalFully s,v)),
+{window} = global.js,
+{ctx} = window,
