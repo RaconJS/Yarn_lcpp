@@ -1,6 +1,6 @@
-b = a,b a = λ0
-{log toJS evalFully eval} = global,
+{log toJS evalFully eval math} = global,
 log = a>(log,(evalFully a),a),
+log,(global.callJS_new global.js.global.Date []).getTime(),
 true = \\$1,
 false = \\$0,
 fact1 = n>(
@@ -20,7 +20,7 @@ fact2 = n>(
 		n
 		([s i]> [s*i,++i]),
 		[1 1]
-	).0
+	)
 ),
 fact3 = (a>a a)(f>x>x==0 1 (x * (f f (--x)))),
 bs = n>(
@@ -30,17 +30,35 @@ bs = n>(
 		[1 1]
 	).1
 ),
-//log,(fact3 10)
-run[
+/*(
+(a>(a>b> a a,a>b>a a)),
+run
+[
  (ctx).fillStyle = "white",
  (ctx).fillRect 0 0 2000 1000,
  (ctx).fillStyle = "blue",
  pos = (a>a)10,
- (ctx).fillRect (0) (100*(toExp,window.Math.sin (evalFully t/1000))) 20 20,
+ (math)=(ctx).fillRect (0) (100*(toExp,20+global.math.sin (t/1000))) 20 20,
 ](a>a),
- t = toExp (window.time a>a),
-(100*(toExp,window.Math.sin (evalFully t/1000)))
-{toJS evalFully toExp} = global,
+t = (callJS_new window.Date []).getTime(),
+(callJS_new window.Date [])
+{toJS evalFully toExp callJS_new math} = global,
+run =l>(global)= do (evalFully,l.reduce[s v]>(do,evalFully s,v)),
+{window} = global.js,
+{ctx} = window,
+)*/
+
+run
+[
+ (ctx).fillStyle = "white",
+ (ctx).fillRect 0 0 2000 1000,
+ (ctx).fillStyle = "blue",
+ pos = (cis t/1000).map v>10+100*(1+v),
+ (math)=(ctx).fillRect pos.0 pos.1 20 20,
+](a>a),
+t = (callJS_new window.Date []).getTime(),
+{toJS evalFully toExp callJS_new math} = global,
+cis = x>[global.math.cos x,global.math.sin x],
 run =l>(global)= do (evalFully,l.reduce[s v]>(do,evalFully s,v)),
 {window} = global.js,
 {ctx} = window,

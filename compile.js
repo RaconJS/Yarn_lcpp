@@ -27,7 +27,7 @@ const TEST = false;
 			};
 			static isSearched = Symbol();
 			static toJS(exp){return exp?.[Exp.symbol]?exp.toJS():exp}
-			static fromJS(value,recursiveLevel=0,fileName){//:Exp
+			static fromJS(value,recursiveLevel=-1,fileName){//:Exp
 				const addId = v=>Object.assign(v,{id:new WordData({fileName})});
 				let ans;
 				switch(typeof value){
@@ -40,16 +40,14 @@ const TEST = false;
 						if(value==null)return Lambda.null;
 						if(recursiveLevel>0)value[this.isSearched]=true;
 						ans =  
-							value instanceof Exp?value:
-							value instanceof Exp_Array?value:
-							value instanceof Exp_Number?value:
-							value instanceof Exp_String?value:
-							value instanceof Array?new List(...value):
-							1?new JSWrapper(value):new NameSpace((obj=>{
-								let newMap=new Map;
-								for(let i in obj)newMap.set(i,!obj[i]?.[this.isSearched]&&recursiveLevel>0?this.fromJS(obj[i],fileName,recursiveLevel-1):obj[i]);
-								return newMap;
-							})(value))
+							value[Exp.symbol]?value:
+							recursiveLevel-- <= 0?new JSWrapper(value):
+								value instanceof Array?new List(...(recursiveLevel>0?value.map(v=>Exp.fromJS(v,recursiveLevel-1,fileName)):value)):
+								new NameSpace((obj=>{
+									let newMap=new Map;
+									for(let i in obj)newMap.set(i,!obj[i]?.[this.isSearched]&&recursiveLevel>0?this.fromJS(obj[i],recursiveLevel-1,fileName):obj[i]);
+									return newMap;
+								})(value))
 						;
 						if(ans.id==undefined)ans.id = addId(ans);
 						if(recursiveLevel>0)if(value)delete value[this.isSearched];
@@ -60,7 +58,10 @@ const TEST = false;
 			static symbol = Symbol("is expression");
 			//labels:Map(string=>Exp);
 		}
-		class Exp_Array extends Array{}
+		class Exp_Array extends Array{
+			//note without this custom map method: this.map would first call 'new Lazy(this.length)', which is only overwriten if there is at least 1 item in the expression.
+			map(foo){return this.length==0?new this.constructor():Array.prototype.map.call(this,foo);}
+		}
 		class Exp_Number extends Number{}
 		class Exp_String extends String{}
 		Exp.prototype[Exp.symbol] = true;
@@ -185,7 +186,6 @@ const TEST = false;
 						if(1)throw Error("compiler error: all null values should be delt with at compile time");
 						else return Lambda.null;
 				}
-				//note this.map first calls 'new Lazy(this.length)' which is overwriten if there is at least 1 item in the expression.
 				ans = startExp.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack,Number)->Lazy}}[]
 					typeof v == "number"?context.getValue(v):
 					typeof v == "string"?v://simple raw string cannot be called
@@ -194,11 +194,6 @@ const TEST = false;
 					v instanceof RecurSetter?v.context?v:Object.assign(new RecurSetter(...v),{...v,context,id:v.id}):
 					v instanceof Reference?Object.assign(new Lazy(...v),{id:v.id,context:context.getContext(v.levelDif)}):
 					v instanceof Lazy?v.context?v:Object.assign(new Lazy(...v),{...v,context}):
-					v instanceof Float?v:
-					v instanceof Int?v://assume (Int extends Float) or (Float extends Int)
-					v instanceof List?v:
-					v instanceof StringExp?v:
-					v instanceof NameSpace?v:
 					v instanceof Exp||
 					v instanceof Exp_Array||
 					v instanceof Exp_String||
@@ -214,10 +209,8 @@ const TEST = false;
 					v//uncallable object
 				);
 				//if(!startExp.id)throw Error("compiler error: list or lazy expression without an id");
-				ans = startExp.isList?Object.assign(new List(...ans),{id:startExp.id||this.id}):
-					ans.reduce((s,v)=>
-						stack.doOnStack(s,v,stack=>s.call(v,context,stack))
-					)
+				ans = startExp.isList?Object.assign(new List(...ans),{id:ans.id||this.id}):
+					ans.reduce((s,v,i)=>stack.doOnStack(s,v,stack=>s.call(v,context,stack)))
 				;
 				if(startExp.labels){
 					let newLabels = new Map();
@@ -251,8 +244,8 @@ const TEST = false;
 			}
 			static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
 				//if(Lazy.isReducible(foo))return new Lazy(Exp.eval(foo,foo,stack,1));
-				foo = foo.evalFully(stack);
 				foo = Exp.fromJS(foo);
+				foo = foo.evalFully(stack);
 				if(foo instanceof Float)return foo;
 				const inc = Int.increment;
 				const zero = new Int(0);
@@ -459,21 +452,19 @@ const TEST = false;
 				}
 				//isOperater:bool&Operator?
 				call(arg,context,stack){//Int->Int-> ... Int-> Int
-					if(this.args.length>=this.len-1){
+					if(this.args.length>=this.len-1)
 						return this.func([...this.args,arg],context,stack);
-					}
 					else return Object.assign(new this.constructor(),{...this,args:[...this.args,arg]});//TODO: add separate id's for different parts of the function.
 				}
 				toJS(){return (...args)=>this.func([...args])}
 			}
 			class Func extends MultiArgLambdaFunc{
 				constructor(func,len,args=[],stack=undefined){
-					super((args,context,stack)=>func(...args),func?.length);
+					super(func,func?.length);
 				}
 				call(arg,context,stack){//Int->Int-> ... Int-> Int
-					if(this.args.length>=this.len-1){
-						return Exp.fromJS(this.func([...this.args,arg].map(v=>Exp.toJS(Exp.evalFully(v,stack))),context,stack));
-					}
+					if(this.args.length>=this.len-1)
+						return Exp.fromJS(this.func(...[...this.args,arg].map(v=>Exp.toJS(Exp.evalFully(v,stack))),context,stack));
 					else return Object.assign(new this.constructor(),{...this,args:[...this.args,arg]});//TODO: add separate id's for different parts of the function.
 				}
 				toJS(){return this.func}
@@ -484,7 +475,7 @@ const TEST = false;
 			get value(){return this.#value};//:Object
 			set value(v){this.#value = v}
 			call(arg,context,stack){
-				return //Lambda.null;
+				return typeof this.value=="function"?Exp.fromJS(this.value(arg)):Lambda.null;
 			}
 			toJS(){return this.value}
 		}
@@ -511,8 +502,8 @@ const TEST = false;
 			eval(stack){
 				stack??=new Stack();
 				//if(!Lazy.isReducible(this.exp))return this;
-				let exp=stack.doOnStack(this,undefined,stack=>this.exp.eval(stack));
-				if(exp instanceof NameSpace)return new NameSpace(new Map([...this.labels,...exp.labels]),arg.exp);
+				let exp=stack.doOnStack(this,undefined,stack=>Exp.eval(this.exp,stack));
+				if(exp instanceof NameSpace)return new NameSpace(new Map([...this.labels,...exp.labels]),this.exp.exp);
 				if(exp instanceof JSWrapper){if(exp.value!=undefined)this.labels.forEach((v,i)=>exp.value[i]=Exp.toJS(Exp.evalFully(v,this,stack)));return exp}
 				return new NameSpace(this.labels,exp);
 			}
@@ -526,6 +517,7 @@ const TEST = false;
 				else return Object.assign(value,newObj)
 			}
 			static get = new class NameSpace_Get extends MultiArgLambdaFunc{}(function get([obj,property],context,stack){
+				loga("??",property)
 				stack.doOnStack(this,obj,stack=>{
 					obj = obj.evalFully(stack);
 				});
@@ -619,8 +611,9 @@ const TEST = false;
 					if(this.arg_f == Float.increment && arg_x instanceof Float)//optimises 'n ++ 0'
 						return new (arg_x instanceof Int?Int:Float)(1+arg_x);
 					let ans = arg_x;
-					for(let i = 0;i<this.value;i++){
+					for(let i = 0;i<this.value&&i<1000000;i++){
 						ans = this.arg_f.call(ans,context,stack);
+						if(i+1>=1000000)throw Error("bailed");
 					}
 					return ans;
 				}
@@ -660,7 +653,7 @@ const TEST = false;
 							this.fallBackExp?
 								args.reduce((s,v)=>s.call(v),this.fallBackExp)
 								:nullValue//args.reduce((s,v)=>s.call(v,context,stack),this.fallBackExp)
-							:new Int(ans)
+							:(ans|0)==ans?new Int(ans):new Float(ans)
 						:ans??nullValue
 					;//can return custom Exp objects.
 				}
@@ -669,12 +662,25 @@ const TEST = false;
 			eval(stack){return this}
 		}
 		class List extends Exp_Array{
-			//tuple
+			//linked list. '[x y]' -> 'end> bool>a x bool>bool y end'
 			constructor(...list){
 				super(list.length);
 				Object.assign(this,list);
 			}
-			labels
+			end;//:Exp?
+			static falseExp = Object.assign(new Lambda(Object.assign(new Lambda(0),new FilelessWordData({word:"const"}))),new FilelessWordData({word:"false"}));//TODO: add IDs
+			static getTailExp = new MultiArgLambdaFunc(([list],c,s)=>list.call(this.falseExp,c,s),2,[],new FilelessWordData({word:"list.getTail"}));
+			getItem(index,context,stack){
+				let end;
+				const defaultExp = ()=>index.call(List.getTailExp,context,stack);
+				return stack.doOnStack(this,stack=>
+					index instanceof Float?
+						index|0<this.length?this[index|0]:
+						(this.end=end.evalFully()) instanceof List?end.getItem(new Int(index-this.length),context,stack):
+						defaultExp()
+					:defaultExp()
+				);
+			}
 			static #ListWithEnd = class extends Exp{
 				constructor(list,end,id){
 					super();
@@ -690,10 +696,9 @@ const TEST = false;
 					let bool = arg;
 					let head = this.#list[0];
 					let tail;
-					if(this.#list.length == 1)tail = this.end;
-					else {
-						//note don't need to add ID to the new List since it cannot be accessed outside this class
-						tail = new this.constructor([...this.#list],this.#end);
+					if(this.#list.length == 1)tail = this.#end;
+					else{
+						tail = new this.constructor([...this.#list],this.#end,this.id);
 						tail.#list.shift();
 					}
 					return bool.call(head,context,stack).call(tail,context,stack);
@@ -711,7 +716,7 @@ const TEST = false;
 				call(){return this}
 			}//a>(a>b>a a,a>b>a a)
 			static toList(exp,stack){
-				exp = exp.evalFully(stack);
+				exp = Exp.evalFully(exp,stack);
 				if(exp instanceof List)return exp;
 				return Object.assign(new List(),exp.id);
 			}
@@ -926,6 +931,7 @@ const TEST = false;
 					this.value.operatorParamObj = this;//:truthy
 					this.length = length;
 				}
+				toJSON(){return "operator:"+this.name};
 				isParsed=false;
 				//name:[String,Number]
 				//index:Number
@@ -964,11 +970,11 @@ const TEST = false;
 				["^" ,  i,new Calc((a,b)=>a^b),2],
 				["%" ,  i,new Calc((a,b)=>a%b),2],
 				["**",  i,new Calc((a,b)=>a**b,new MultiArgLambdaFunc(([a,b],context,stack)=>b.call(a,context,stack),2)),2],
-				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b,f],c,s)=>//a>b>f>a (b f)
+				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b],c,s)=>//a>b>f>a (b f)
 					a instanceof List && b instanceof List ?Object.assign(new List(...a,...b),{id:a.id}):
 					a instanceof StringExp && b instanceof StringExp ?Object.assign(new StringExp(a+b),{id:a.id}):
-					a.call(b.call(f,c,s),c,s),3)
-				),2],
+					new ArrowFunc((f,c,s)=>a.call(b.call(f,c,s),c,s),{id:a.id})
+				,2),2)],
 				["/" ,  i,new Calc((a,b)=>a/b),2],
 				["+" ,++i,new Calc((a,b)=>a+b,new MultiArgLambdaFunc(([a,b,f,x],c,s)=>a.call(f,c,s).call(b.call(f,c,s).call(x,c,s),c,s),4)),2],
 				["-" ,  i,new Calc((a,b)=>a-b),2],
@@ -1033,25 +1039,88 @@ const TEST = false;
 			const importFile = async(type,name,context,stack)=>{
 				//UNFINISHED
 			};
+			const callJS = (foo,args,stack,useNew)=>{
+				//assume: args:List
+				foo = Exp.evalFully(foo);
+				if(foo instanceof Func)foo=foo.func;
+				args = List.toList(args);
+				if(typeof foo == "function"){
+					args = args.map(v=>Exp.toJS(new Lazy(v).evalFully(stack)));
+					return Exp.fromJS(useNew?new foo(...args):foo(...args));
+				}
+				return Lambda.null;
+			}
 			addPublics(globalContext,new NameSpace(new Map([
 				["global",new NameSpace(new Map([
-					["js",JSintervace],//'{window eval}=import.std'
-					//["JSON",Exp.fromJS(JSON,Infinity)],
-					//["Math",Exp.fromJS(Math,Infinity)],
-					["callJS",new MultiArgLambdaFunc(([foo,args],c,stack)=>{
-						//assume: args:List
-						if(typeof foo == "function"){
-							return foo(...args.map(v=>new Lazy(v).evalFully(stack)));
-						}
-						return Lambda.null;
-					},2)],
-					["toJS",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s).toJS():v)],
-					["toExp",new ArrowFunc((v,c,s)=>Exp.fromJS(Exp.eval(v,{id:undefined},s)))],
-					["log",new MultiArgLambdaFunc(([logValue,returnValue],c,stack)=>{
-						console.log(logValue[Exp.symbol]?logValue.eval(stack):logValue);
-						return returnValue;
-					},2)],
 					["Infinity",RecurSetter.forever],
+					//["impure",new NameSpace(new Map([
+						//functions that would normally return void are 'a>b>b' instead
+						["do",new MultiArgLambdaFunc(([value,then],c,stack)=>{value[Exp.symbol]?stack.doOnStack(this,value,stack=>Exp.evalFully(value,stack)):value;
+							return then;
+						},2)],
+						["log",new MultiArgLambdaFunc(([logValue,returnValue],c,stack)=>{
+							//uses `eval` instead of `evalFully` so that it is doesn't cause side effects to the Lazy expressions and so it can be used for debugging.
+							console.log(logValue[Exp.symbol]?logValue.eval(stack):logValue);
+							return returnValue;
+						},2)],
+						["callJS",new MultiArgLambdaFunc(([foo,args],c,stack)=>{
+							//assume: args:List
+							return callJS(foo,args,stack,false);
+						},2)],
+						["callJS_new",new MultiArgLambdaFunc(([foo,args],c,stack)=>{
+							//assume: args:List
+							return callJS(foo,args,stack,true);
+						},2)],
+						["js",JSintervace],//'{window eval}=import.std'
+						["toJS",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s).toJS():v)],
+						["toExp",new ArrowFunc((v,c,s)=>Exp.fromJS(Exp.eval(v,{id:undefined},s)))],
+					//]))],
+					["JSON",Exp.fromJS(JSON,Infinity)],
+					["math",new NameSpace(new Map([
+						["tau",new Int(Math.PI*2)],
+						"E",
+						"LN10",
+						"LN2",
+						"LOG10E",
+						"LOG2E",
+						"SQRT1_2",
+						"SQRT2",
+						"abs",
+						"acos",
+						"acosh",
+						"asin",
+						"asinh",
+						"atan",
+						"atan2",
+						"atanh",
+						"cbrt",
+						"ceil",
+						"clz32",
+						"cos",
+						"cosh",
+						"exp",
+						"expm",
+						"floor",
+						"fround",
+						"hypot",
+						"imul",
+						"log",
+						"log2",
+						"log1p",
+						"log10",
+						"max",
+						"min",
+						"pow",
+						"random",
+						"round",
+						"sign",
+						"sin",
+						"sinh",
+						"sqrt",
+						"tan",
+						"tanh",
+						"trunc",
+					].map(v=>typeof v!="string"?v:[v,Exp.fromJS(Math[v],Infinity)])))],
 					["import",new NameSpace(new Map([//UNFINISHED
 						["code",new ArrowFunc((name,context,stack)=>{
 							let fileString = importFile(name,context,stack);
@@ -1060,10 +1129,6 @@ const TEST = false;
 					]))],
 					["eval",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.eval(s):v)],
 					["evalFully",new ArrowFunc((v,c,s)=>v[Exp.symbol]?v.evalFully(s):v)],
-					["do",new MultiArgLambdaFunc(([value,then],c,stack)=>{value[
-						Exp.symbol]?stack.doOnStack(this,value,stack=>value.eval(stack)):value;
-						return then;
-					},2)],
 				]))],
 			])));
 			globalContext.startLabels
@@ -1362,7 +1427,7 @@ const TEST = false;
 						{//allows for 'a = b, a b = ()'
 							//assume: this case does not contain a reference loop
 							//assume: parent.parent.pattern != ","
-							if(higherParamParent.pattern==","||higherArgParent.pattern==","){
+							if(higherParamParent.pattern=="," || higherArgParent.pattern==","){
 								higherParamParent = higherParamParent.parent;
 								higherArgParent = higherArgParent.parent;
 								if(higherParamParent==higherArgParent)return;
@@ -1880,6 +1945,7 @@ const TEST = false;
 						let value = match.value;
 						if(!match.list)continue;
 						let list = value;
+						let skipOperator = false;
 						for(let priority=0;priority<maxPriority+1;priority++){
 							for(let i=0;i<list.length;i++){
 								//'a+b' -> '((+)a b)'
@@ -1899,11 +1965,11 @@ const TEST = false;
 									if(newIndex==0)list.unshift(...newOperation);//prevent: '(1 + 2)' -> '((+ 1 2))'
 									else list.splice(newIndex,0,newOperation);
 									i-=useLeftArg;
+									let nextOperatorHasLeftArg = list[i].operatorParamObj?.length==2;
+									if(nextOperatorHasLeftArg)i++;//skips next operator ; allows for '* / a' -> '((/)(*)a)'
 									//'a + b' -> '(+ a b)'
 									//'! a' -> '(! a)'
 								}
-								//operator.operatorParamObj is nolonger needed, so is removed so that JSON.stringify works on operators
-								operator.operatorParamObj=undefined;
 							}
 						}
 					}
@@ -1920,6 +1986,7 @@ const TEST = false;
 					//parse null values and simplify expressions: '()' -> `Lambda.null`
 					for(let [match,i,bracketParent] of forEachPattern()){
 						if([Lambda,Array,RecurSetter,Reference].includes(match.value.constructor)){
+							if(match.value.constructor == Array && (match.value.isList||match.value.labels))continue;
 							if(match.value.length==0){//match.value:Array|Lambda|RecurSetter
 								let index = match.parent.value.indexOf(match.value);
 								if(index!=-1)//may of already been removed ealier
@@ -1933,8 +2000,10 @@ const TEST = false;
 						if(v instanceof RecurSetter)forEach(v.recur);
 						//else if(v instanceof NameSpace)throw Error("compiler error: illegal type in source code")//v.labels.forEach(v=>forEach(v.value));
 						//else if(v instanceof List)throw Error("compiler error: illegal type in source code")//v.labels.forEach(v=>forEach(v.value));
-						else if(v instanceof Array){
-							if(v.length == 0 && !v.labels)throw Error("compiler error: non-nulled empty list found"+(console.log(v,i)??""));
+						else 
+						if(v instanceof Array){
+							if(v.constructor == Array && (v.isList||v.labels)){}
+							else if(v.length == 0 && !v.labels)throw Error("compiler error: non-nulled empty list found"+(console.log(v,i)??""));
 							v.forEach(forEach);
 						}
 					})
@@ -1963,7 +2032,7 @@ const TEST = false;
 				const tree = treeParse(wordsData);
 				const context = parseContexts(tree);
 				const expression = context.value;
-				Object.assign(file,{tree,context,expression})
+				Object.assign(file,{tree,context,expression});
 				return file;//parse(tree);
 			}
 			return main();

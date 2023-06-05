@@ -6,13 +6,29 @@
 	<title></title>
 </head>
 <body>
-	<textarea id = "input"></textarea>
+<textarea id = "input">
+run
+[
+ (ctx).fillStyle = "white",
+ (ctx).fillRect 0 0 2000 1000,
+ (ctx).fillStyle = "blue",
+ pos = (cis t/1000).map v>10+100*(1+v),
+ (math)=(ctx).fillRect pos.0 pos.1 20 20,
+](a>a),
+t = (callJS_new window.Date []).getTime(),
+(callJS_new window.Date [])
+{toJS evalFully toExp callJS_new math} = global,
+cis = x>[global.math.cos x,global.math.sin x],
+run =l>(global)= do (evalFully,l.reduce[s v]>(do,evalFully s,v)),
+{window} = global.js,
+{ctx} = window,
+</textarea>
 	<pre id = "output"></pre>
 	<canvas id = "canvas"></canvas>
 	<script src="compile.js"></script>
 	<script>
 		window.error="";
-		var loopFrames = (60/20)|0;
+		var loopFrames = (60/60)|0;
 		window.ctx = canvas.getContext("2d");
 		let loop = async()=>{
 			let timer = 0;
@@ -25,7 +41,7 @@
 					window.ans=ans1;
 					if(compile.isExpression(ans1))try{ans1 = JSON.stringify(ans1);}catch(e){console.log(ans1);throw e}
 					ans ??= ans1;
-					output.innerText = ans;
+					if(output.innerText!=ans)output.innerText = ans;
 					resolve();
 				})
 			);
