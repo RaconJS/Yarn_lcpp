@@ -913,14 +913,18 @@
 		//e.g.
 	//basic types:
 		//array '[]'
-		//lambda 'λ'
-		//context '{}''
+		//lambda 'λ' or '\' //This includes every object
+		//null '()'
+		//context '{}'
 		//string '""'
 		//assembly block '(@)'
 		//meta block '#'
 		//number '0'
+		//can be mutated '?'
+		//can mutate state '?'
 	//e.g.
-		a:{} = {prop <= f>x>f(f x)};
+		a:{} = {prop <= f>x>f(f x)},//strongly typed label
+		a:[] > a.0 + a.2,//typed function
 //impure patterns '?' :
 	//mutable '?':
 		//The patterns used for mutations are:
@@ -954,6 +958,19 @@
 	(1 2 3), //normal block
 	[1 2 3], //array block
 	{a=1,b=2,c=3} //object block
+//inbuilt object 'global':
+	//'global' is an object that contains things that allow the language to interact with other systems, such as IO, or log to the console.
+	//Here is some pseudocode for a polly-fill of 'global':
+		global ? = {
+			do ? <= a ? > b ? > a,//all functions that would otherwise return `void` instead use this structure. 
+			log ? <= do,
+			import <=,
+		},
+	//'do'
+		//This function is for 
+	//e.g.
+		{input} = global;
+
 //tests
 	#helloWorld = (
 		print (@r0)(λλ$1) "hello world",
