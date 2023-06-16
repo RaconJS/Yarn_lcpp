@@ -23,28 +23,42 @@ run =l>(global)= do (evalFully,l.reduce[s v]>(do,evalFully s,v)),
 {window} = global.js,
 {ctx} = window,
 </textarea>
+	<pre id = "output1"></pre>
 	<pre id = "output"></pre>
 	<canvas id = "canvas"></canvas>
 	<script src="compile.js"></script>
+	<script id = "textFile" src="test.llcp"></script>
 	<script>
 		window.error="";
-		var loopFrames = (60/60)|0;
 		window.ctx = canvas.getContext("2d");
+		window.ans;
+		window.duration = {compile:-1,eval:-1};
+		var loopFrames = (60/4)|0;
 		let loop = async()=>{
 			let timer = 0;
-			while(true)await new Promise((resolve,reject)=>
-				window.requestAnimationFrame(()=>{
-					if((timer=(timer+1)%loopFrames)!=0){resolve();return}
-					let ans;
-					files.reset();
-					let ans1 = tryCatch(()=>compile(input.value,null).evalFully(),error=>ans=window.error=error,compile("","null"));
-					window.ans=ans1;
-					if(compile.isExpression(ans1))try{ans1 = JSON.stringify(ans1);}catch(e){console.log(ans1);throw e}
-					ans ??= ans1;
-					if(output.innerText!=ans)output.innerText = ans;
-					resolve();
-				})
-			);
+			while(true){
+				await new Promise((resolve,reject)=>
+					window.requestAnimationFrame(()=>{
+						if((timer=(timer+1)%loopFrames)!=0){resolve();return}
+						let ans;
+						files.reset();
+						let ans1 = tryCatch(()=>{
+							let t0 = new Date().getTime();
+							let a=compile(input.value,null);
+							window.duration.compile = new Date().getTime()-t0;
+							a=a.evalFully();
+							window.duration.eval = new Date().getTime()-window.duration.compile-t0;
+							output1.innerText = "compile:"+window.duration.compile+"\neval:"+window.duration.eval;
+							return a;
+						},error=>ans=window.error=error,compile("","null"));
+						window.ans=ans1;
+						if(compile.isExpression(ans1))try{ans1 = JSON.stringify(ans1);}catch(e){console.log(ans1);throw e}
+						ans ??= ans1;
+						if(output.innerText!=ans)output.innerText = ans;
+						resolve();
+					})
+				);
+			}
 		};
 		loop();
 	</script>

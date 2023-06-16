@@ -1,1 +1,1 @@
-global.log"2\"2 2" 0
+global.log,global.toJS(global.callJS global.js.global.JSON.stringify[(a<=2)]),0
