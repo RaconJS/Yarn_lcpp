@@ -25,9 +25,22 @@ const TEST = false;
 			static evalFully(exp,stack=new Stack){
 				return new Lazy(exp).evalFully(stack);
 			};
+			static isTypeReducible(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
+				//isLazyEvalType
+				return exp instanceof Lazy || exp instanceof Reference || exp instanceof RecurSetter;
+			}
+			static isReducible(exp){
+				return !exp?.[Exp.symbol]?false:
+					exp instanceof NameSpace?exp.exp instanceof NameSpace||exp.exp instanceof JSWrapper||this.isReducible(exp.exp):
+					//exp?.constructor == Array?(!exp.isList && !exp?.labels):
+					exp instanceof AsyncExp?exp.isReducible():
+					exp instanceof Lazy?!(exp.length==1 && exp[0] instanceof Lambda && !exp.isList && !exp.labels):
+					exp instanceof RecurSetter||this.isTypeReducible(exp);
+			}
 			static isSearched = Symbol();
 			static toJS(exp){return exp?.[Exp.symbol]?exp.toJS():exp}
 			static fromJS(value,recursiveLevel=-1,fileName){//:Exp
+				
 				const addId = v=>Object.assign(v,{id:new WordData({fileName})});
 				let ans;
 				switch(typeof value){
@@ -53,6 +66,7 @@ const TEST = false;
 						if(recursiveLevel>0)if(value)delete value[this.isSearched];
 					break;
 				}
+				if(ans == undefined)throw new CompilerError("compiler error: undefined value");
 				return ans == Lambda.null?ans:addId(ans);
 			}
 			static symbol = Symbol("is expression");
@@ -143,6 +157,18 @@ const TEST = false;
 				return "SOURCE: "+this.word;
 			}
 		}
+		class CompilerError extends Error{}
+		function evalFully_step(startLazyExp,onSuccess=lazy=>lazy,onFail=lazy=>lazy,stack){//UNFINISHED
+			//startLazyExp:Lazy,onSuccess:Lazy->Exp,onFail:Lazy->Exp,stack:Stack
+			let isReducible=false;
+			let newExp = Object.assign(new Lazy(),startLazyExp);
+			startLazyExp.eval_mapCodeToExpresstions(stack).forEach((exp,i)=>{
+				newExp[i]=stack.doOnStack(newExp,exp,stack=>exp=Exp.eval(exp,stack));
+				if(Exp.isReducible(exp))isReducible=true;
+			});
+			if(isReducible)return onFail(newExp);
+			else return onSuccess(newExp);
+		}
 		class Lazy extends Exp_Array{//:Exp ; lazy evaluation
 			//Lazy : Exp[]
 			context;//:Context
@@ -158,35 +184,12 @@ const TEST = false;
 				if(this.length == 1 && this[0] instanceof Lambda)return this[0].call(arg,this.context,stack);
 				else return this.eval(stack).call(arg,this.context,stack);
 			}//(a>a)(a>a a)
-			static isTypeReducible(exp){//returns to if exp.eval() != exp ; note doesn't include `(&& !exp.labels)`
-				//isLazyEvalType
-				return exp instanceof Lazy || exp instanceof Reference || exp instanceof RecurSetter;
-			}
-			static isReducible(exp){
-				return !exp?.[Exp.symbol]?false:
-					exp instanceof NameSpace?exp.exp instanceof NameSpace||exp.exp instanceof JSWrapper||this.isReducible(exp.exp):
-					//exp?.constructor == Array?(!exp.isList && !exp?.labels):
-					exp instanceof AsyncExp?exp.isReducible():
-					exp instanceof Lazy?!(exp.length==1 && exp[0] instanceof Lambda && !exp.isList && !exp.labels):
-					exp instanceof RecurSetter||this.isTypeReducible(exp);
-			}
 			isSimplyReducible(exp){//exp:Exp|Array|any ; returns true if exp is valid to be parsed as `ans` in the `ans.map` part of `Lazy.prototype.eval``.
 				return (exp?.constructor == Array||exp instanceof Lazy) && exp.length==1 && (!exp.isList && !exp.labels) && (exp[0]?.constructor == Array||exp[0] instanceof Lazy);
 			}
 			//static isReducible(exp){return (exp instanceof Lazy || exp.constructor==Array &&!exp.labels)}
-			eval(stack=new Stack()){
-				const context = this.context??new Context();
-				let startExp = this;
-				let ans = this;
-				{
-					//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
-					while(this.isSimplyReducible(startExp))startExp=startExp[0];//assume: startExp is Tree
-					//startExp:Lazy|Array
-					if(startExp.length == 0 && !startExp.labels&&!startExp.isList)
-						if(1)throw Error("compiler error: all null values should be delt with at compile time");
-						else return Lambda.null;
-				}
-				ans = startExp.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack,Number)->Lazy}}[]
+			eval_mapCodeToExpresstions(exp,context=this.context){//:Lazy|(Array&([]Lazy)[])->Exp[]
+				return exp.map(v=>//[]->{call:(arg:Lazy,Stack)->Combinator|Lazy&{call:(Exp,Context,Stack,Number)->Lazy}}[]
 					typeof v == "number"?context.getValue(v):
 					typeof v == "string"?v://simple raw string cannot be called
 					//typeof v == "string"?:
@@ -208,8 +211,25 @@ const TEST = false;
 					})(v):*/
 					v//uncallable object
 				);
+			}
+			eval(stack=new Stack()){
+				let context = this.context??new Context();
+				let startExp = this;
+				let ans = this;
+				{
+					//[x],Lazy(x),1::x -> x; where x:Lazy|Array|RecurSetter
+					while(this.isSimplyReducible(startExp))startExp=startExp[0];//assume: startExp is Tree
+					//startExp:Lazy|Array
+					context = startExp.context??context;
+					if(startExp.length == 0 && !startExp.labels&&!startExp.isList){
+						if(1)throw Error("compiler error: all null values should be delt with at compile time");
+						else return Lambda.null;
+					}
+				}
+				ans = this.eval_mapCodeToExpresstions(startExp,context);//ans:Lazy
 				//if(!startExp.id)throw Error("compiler error: list or lazy expression without an id");
 				ans = startExp.isList?Object.assign(new List(...ans),{id:ans.id||this.id}):
+					startExp.labels&&ans.length==0?undefined:
 					ans.reduce((s,v,i)=>stack.doOnStack(s,v,stack=>s.call(v,context,stack)))
 				;
 				if(startExp.labels){
@@ -217,9 +237,9 @@ const TEST = false;
 					for(let [i,v] of startExp.labels){
 						newLabels.set(i,Object.assign(new Lazy(v),{context}).eval(stack));
 					}
-					ans = Object.assign(new NameSpace(newLabels,ans),{id:ans.id});
+					ans = Object.assign(new NameSpace(newLabels,ans),{id:startExp.id});
 				}
-				if(ans!=this){//optimise for next time.
+				if(0)if(ans!=this){//optimise for next time.
 					this.splice(0,this.length,ans);
 					this.labels = undefined;
 					this.isList = undefined;
@@ -230,27 +250,14 @@ const TEST = false;
 			evalFully(stack=new Stack()){
 				let ans = this;
 				let bail =100000;
-				while(Lazy.isReducible(ans)&&bail-->0)
+				while(Exp.isReducible(ans)&&bail-->0)
 					ans = ans.eval(stack);
 				if(bail<=0)throw Error("possible compiler error: bailled. may be caused by:"
-					+"1. A compiler bug: probably within the Lazy.isReducible function, or somethere else in the code"
+					+"1. A compiler bug: probably within the Exp.isReducible function, or somethere else in the code"
 					+"2. An expression that takes many steps to evaluate;"
 					+"3. An expression that cannot be fully reduced (i.e. one that does not have a reduced form)"
 				);
 				return ans;
-			}
-			toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
-				return this.constructor.toInt(foo,stack);
-			}
-			static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
-				//if(Lazy.isReducible(foo))return new Lazy(Exp.eval(foo,foo,stack,1));
-				foo = Exp.fromJS(foo);
-				foo = foo.evalFully(stack);
-				if(foo instanceof Float)return foo;
-				const inc = Int.increment;
-				const zero = new Int(0);
-				let ans = foo.call(inc,undefined,stack).call(zero,undefined,stack);
-				return ans?.eval?.(stack)??ans;
 			}
 		}
 		class Lambda extends Exp_Array{//:Exp
@@ -278,7 +285,7 @@ const TEST = false;
 			id;//:WordData
 			getRecursLeft(stack){//()-> finite Number | Infinity
 				if(this.recur.length==1 && this.recur[0] == RecurSetter.forever)return Infinity;
-				let ans = stack.doOnStack(this,this.recur,stack=>Lazy.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur.id,context:this.context}),stack));
+				let ans = stack.doOnStack(this,this.recur,stack=>Float.toInt(Object.assign(new Lazy(...this.recur),{id:this.recur.id,context:this.context}),stack));
 				if(+ans == Infinity||+ans<0||isNaN(+ans))ans = 0;//make finite
 				return ans;
 			}
@@ -432,7 +439,7 @@ const TEST = false;
 		}
 		//js functions:
 			class ArrowFunc extends Exp{//arraw function
-				constructor(func,id){
+				constructor(func,id=new FilelessWordData({word:"function"})){
 					super();
 					this.func=func;
 				}
@@ -443,7 +450,7 @@ const TEST = false;
 				toJS(){return this.func}
 			}
 			class MultiArgLambdaFunc extends Exp{//arraw function
-				constructor(func,len,args=[],id){
+				constructor(func,len,args=[],id=new FilelessWordData({word:"function"})){
 					super()
 					this.func = func;//:(...Number[])->Number
 					this.len = len;
@@ -494,14 +501,14 @@ const TEST = false;
 			labels;//labels:Map(string,Exp)
 			exp;//: Exp?
 			call(arg,context,stack){
-				if(Lazy.isReducible(this))return this.evalFully().call(arg,context,stack);
+				if(Exp.isReducible(this))return this.evalFully().call(arg,context,stack);
 				if(this.exp)return this.exp.call(arg,context,stack);//{a>a a} x -> (a>a a) x
 				if(arg instanceof NameSpace)return new NameSpace(new Map([...this.labels,...arg.labels]),arg.exp);
 				else return new NameSpace(this.labels,arg);
 			}
 			eval(stack){
 				stack??=new Stack();
-				//if(!Lazy.isReducible(this.exp))return this;
+				//if(!Exp.isReducible(this.exp))return this;
 				let exp=stack.doOnStack(this,undefined,stack=>Exp.eval(this.exp,stack));
 				if(exp instanceof NameSpace)return new NameSpace(new Map([...this.labels,...exp.labels]),this.exp.exp);
 				if(exp instanceof JSWrapper){if(exp.value!=undefined)this.labels.forEach((v,i)=>exp.value[i]=Exp.toJS(Exp.evalFully(v,this,stack)));return exp}
@@ -517,7 +524,6 @@ const TEST = false;
 				else return Object.assign(value,newObj)
 			}
 			static get = new class NameSpace_Get extends MultiArgLambdaFunc{}(function get([obj,property],context,stack){
-				loga("??",property)
 				stack.doOnStack(this,obj,stack=>{
 					obj = obj.evalFully(stack);
 				});
@@ -566,14 +572,14 @@ const TEST = false;
 			static set = new class NameSpace_Set extends MultiArgLambdaFunc{}(function([nameSpace,property,value],context,stack){
 				return stack.doOnStack(new Exp({id:NameSpace.assign_id}),undefined,stack=>{
 					const tryAgain = ()=>new Lazy(new this.constructor(this.func,this.len,[nameSpace,property],this.id),value);
-					if(Lazy.isReducible(property))property = stack.doOnStack(NameSpace.assign_id,property,stack=>property.eval(stack));
+					if(Exp.isReducible(property))property = stack.doOnStack(NameSpace.assign_id,property,stack=>property.eval(stack));
 					if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
-					if(Lazy.isReducible(property))return tryAgain();
+					if(Exp.isReducible(property))return tryAgain();
 					else {
 						if(property instanceof Float && !(nameSpace instanceof NameSpace)){
 							property = +property;
-							if(Lazy.isReducible(nameSpace))nameSpace = stack.doOnStack(NameSpace.assign_id,nameSpace,stack=>nameSpace.eval(stack));
-							if(Lazy.isReducible(nameSpace))return tryAgain();
+							if(Exp.isReducible(nameSpace))nameSpace = stack.doOnStack(NameSpace.assign_id,nameSpace,stack=>nameSpace.eval(stack));
+							if(Exp.isReducible(nameSpace))return tryAgain();
 							if(nameSpace instanceof List){
 								let newList = Object.assign(new List(...nameSpace),{id:nameSpace.id});
 								if(!isNaN(property)&&Math.abs(property)!=Infinity&&property>=0)newList[property|0] = value;
@@ -617,7 +623,6 @@ const TEST = false;
 					}
 					return ans;
 				}
-				eval(){return this}
 			};
 			static increment = new class Increment extends Exp{
 				//n> f>x>f(n f x)
@@ -625,11 +630,23 @@ const TEST = false;
 				eval(stack){return this};
 				lazyExpVersion=new Lambda(new Lambda(new Lambda(1,[2,1,0])));
 			};
+			toInt(foo,stack){//foo:{call(inc)->{call(0)->Number}}
+				return this.constructor.toInt(foo,stack);
+			}
 			call(arg_f){//f>x>
 				if(Exp.eval(arg_f,this) instanceof Float)return new this.constructor(arg_f**this);
 				return new this.constructor.Part1(this,arg_f);
 			}
-			eval(){return this}
+			static toInt(foo,stack=new Stack){//foo:{call(inc)->{call(0)->Number}}
+				//if(Exp.isReducible(foo))return new Lazy(Exp.eval(foo,foo,stack,1));
+				foo = Exp.fromJS(foo);
+				foo = foo.evalFully(stack);
+				if(foo instanceof Float)return foo;
+				const inc = Int.increment;
+				const zero = new Int(0);
+				let ans = foo.call(inc,undefined,stack).call(zero,undefined,stack);
+				return ans?.eval?.(stack)??ans;
+			}
 		}
 		class Int extends Float{
 			constructor(value){
@@ -646,7 +663,7 @@ const TEST = false;
 			call(arg,context,stack){//Int->Int-> ... Int-> Int
 				let args = [...this.args,arg];
 				if(args.length>=this.func.length){
-					const ans = this.func(...args.map(v=>+Lazy.toInt(v,stack)));
+					const ans = this.func(...args.map(v=>+Float.toInt(v,stack)));
 					const nullValue = Lambda.null;
 					return typeof ans == "number"?
 						isNaN(ans)?
@@ -961,7 +978,7 @@ const TEST = false;
 			let i=0;
 			const assign_id = new FilelessWordData({word:"="});
 			Operator.owner.startLabels=Operator.owner.publicLabels = new Map([
-				["!" ,  i,new Lambda(0,bool_false,bool_true)],//new ArrowFunc((a,globalContext,stack)=>Lazy.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
+				["!" ,  i,new Lambda(0,bool_false,bool_true)],//new ArrowFunc((a,globalContext,stack)=>Float.toInt(a,stack)==0||a==Lambda.null?bool_true:bool_false),1],
 				["~" ,  i,new Calc((a)=>~a),1],
 				["++",  i,new Calc((a)=>a+1,new MultiArgLambdaFunc(([a,f,x],c,s)=>f.call(a.call(f,c,s).call(x,c,s),c,s),3)),1],
 				["--",  i,new Calc((a)=>a-1),1],
@@ -970,11 +987,12 @@ const TEST = false;
 				["^" ,  i,new Calc((a,b)=>a^b),2],
 				["%" ,  i,new Calc((a,b)=>a%b),2],
 				["**",  i,new Calc((a,b)=>a**b,new MultiArgLambdaFunc(([a,b],context,stack)=>b.call(a,context,stack),2)),2],
-				["*" ,++i,new Calc((a,b)=>a*b,new MultiArgLambdaFunc(([a,b],c,s)=>//a>b>f>a (b f)
-					a instanceof List && b instanceof List ?Object.assign(new List(...a,...b),{id:a.id}):
+				["*" ,++i,new MultiArgLambdaFunc(([a,b],c,s)=>//a>b>f>a (b f)
+					(a=Exp.evalFully(a,s)) instanceof List && (b=Exp.evalFully(b,s)) instanceof List ?Object.assign(new List(...a,...b),{id:a.id}):
 					a instanceof StringExp && b instanceof StringExp ?Object.assign(new StringExp(a+b),{id:a.id}):
+					a instanceof Float && b instanceof Float?new Calc((a,b)=>a*b):
 					new ArrowFunc((f,c,s)=>a.call(b.call(f,c,s),c,s),{id:a.id})
-				,2),2)],
+				,2),2],
 				["/" ,  i,new Calc((a,b)=>a/b),2],
 				["+" ,++i,new Calc((a,b)=>a+b,new MultiArgLambdaFunc(([a,b,f,x],c,s)=>a.call(f,c,s).call(b.call(f,c,s).call(x,c,s),c,s),4)),2],
 				["-" ,  i,new Calc((a,b)=>a-b),2],
@@ -987,10 +1005,10 @@ const TEST = false;
 				["||",  i,new Lambda(new Lambda(1,1,0)),2],
 				["^^",  i,new Lambda(new Lambda(1,[0,bool_false,1],0)),2],
 				["=" ,  i,new MultiArgLambdaFunc(function([nameSpace,property,value],context,stack){
-					if(Lazy.isReducible(property) )property = property.eval(stack);
+					if(Exp.isReducible(property) )property = property.eval(stack);
 					if(!(property instanceof StringExp || property instanceof Float))return nameSpace;
-					if(Lazy.isReducible(nameSpace))nameSpace = nameSpace.eval(stack);
-					if(Lazy.isReducible(nameSpace)||Lazy.isReducible(property))
+					if(Exp.isReducible(nameSpace))nameSpace = nameSpace.eval(stack);
+					if(Exp.isReducible(nameSpace)||Exp.isReducible(property))
 						return Object.assign(new Lazy(this,nameSpace.eval(stack),property.eval(stack)),{context,id:assign_id});
 					else {
 						if(property instanceof Float && !(nameSpace instanceof NameSpace)){
@@ -1055,7 +1073,9 @@ const TEST = false;
 					["Infinity",RecurSetter.forever],
 					//["impure",new NameSpace(new Map([
 						//functions that would normally return void are 'a>b>b' instead
-						["do",new MultiArgLambdaFunc(([value,then],c,stack)=>{value[Exp.symbol]?stack.doOnStack(this,value,stack=>Exp.evalFully(value,stack)):value;
+						["do",new MultiArgLambdaFunc(([value,then],c,stack)=>{
+							Exp.TEST=1;
+							value[Exp.symbol]?stack.doOnStack(this,value,stack=>Exp.evalFully(value,stack)):value;							
 							return then;
 						},2)],
 						["log",new MultiArgLambdaFunc(([logValue,returnValue],c,stack)=>{
@@ -1161,12 +1181,12 @@ const TEST = false;
 					let data = wordsData[i];//:WordData
 					let word = data.word;
 					let value = [word,new WordData(data)];//:[String,WordData&ID]
-					if(word.match(/^\//))list.push(value);
-					else if(word.match(/[(\[{]/)){
+					if(word.match(/^\/[*/]/))list.push(value);
+					else if(word.match(/^[(\[{]$/)){
 						stack.push(list);
 						list.push(value,list = []);
 					}
-					else if(word.match(/[)\]}]/)){
+					else if(word.match(/^[)\]}]$/)){
 						list = stack.pop();
 						if(!list)data.throwError("syntax", "unballanced brackets: Too many closing brackets", a=>Error(a));
 						//assert: list[list.length-2] exists
