@@ -1,0 +1,13 @@
+{
+	last> a>a 1 a>a 2 a>a 3 a>a 4 last,
+	a = last> a>a 1 a>a 2 last,
+	b = last> a>a 3 a>a 4 last,
+	+ = a>b> f>x>a f (b f x),
+	* = a>b> f> a (b f),
+	concat <= a>b> last> a (b last), //*
+	get <= index>(index a>a false, a endArray)true,
+	endArray = (a>a a)self>bool>bool end (self self),
+	end = a>(a>b>a a,a>b>a a),
+	true = \\$1,
+	false = \\$0,
+}

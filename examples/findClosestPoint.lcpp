@@ -1,0 +1,2 @@
+min,points.map,[v]>distance v point
+min = list>list.reduce([s v]>(<)s v s v)list.
