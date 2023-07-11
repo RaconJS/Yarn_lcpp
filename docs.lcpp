@@ -50,6 +50,8 @@
 		&&
 		||
 		^^
+		==
+		===
 	//longExpression:
 		 //list of expressions
 		expression
@@ -133,8 +135,6 @@
 		( params )<=>
 		expression : type
 		()
-		longExpression == expression
-		longExpression === expression
 		expression 2ArgumentOperator expression
 		{}
 		{ longExpression }
@@ -390,7 +390,7 @@
 		//e.g.
 			(a = 2, a> a, b = 3, a)//Y_ish combinator with 2 extra labels
 			(a = 2,\ a b,b = 3)
-			square = (x> two =  = x)
+			square = (x> two x two = f>x>f (f x))
 	//using the syntax together we can make block scopes
 		//e.g.
 			(
