@@ -884,6 +884,7 @@ const TEST = false;
 				type="operator";//:"operator"|"word"|"number"|"symbol"|"function"|"assignment"
 				parent;//:BracketPattern
 				isFirst;//:bool ; Is true if this is the start of a list, or can be used as the starting function.
+				type;//:?Type
 				//optionals
 					pattern;//:?String & word
 					options;//:?String & joined words
@@ -892,6 +893,9 @@ const TEST = false;
 					list;
 					//
 					usingLabels;//:?string[] if '()>'|Map(String,Param) if '()=>'; for '()>' and '()=>'
+			}
+			class Type{
+				properties = new Map();//:Map(string|number => Type|Pattern)
 			}
 			let num=0;//is for TESTING and debugging only
 			class BracketPattern extends Pattern{
