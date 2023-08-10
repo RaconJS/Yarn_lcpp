@@ -884,7 +884,7 @@ const TEST = false;
 				type="operator";//:"operator"|"word"|"number"|"symbol"|"function"|"assignment"
 				parent;//:BracketPattern
 				isFirst;//:bool ; Is true if this is the start of a list, or can be used as the starting function.
-				type;//:?Type
+				typeAnnotation;//:?Type
 				//optionals
 					pattern;//:?String & word
 					options;//:?String & joined words
