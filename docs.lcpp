@@ -213,92 +213,6 @@
 		(bool>bool 1 bool>bool 2 bool>bool 3)
 		53
 		1
-//recursion '::' :
-	//about max recursion rules:
-		//1. Every function call in has an associated max recursion.
-		//2. The max recursion of a function call must be known before it is called.
-		//3. The max recursion belongs to the piece of source code itself.
-			//This is since the amount of source code is finite.
-			//This is to prevent infinite recursion.
-		//4. The max recursion can only be decreased (and not increased) unless there is no max recursion set.
-			//This is to prevent infinite recursion.
-		//5. The amount of times a function recurs can worked out by looking at the callstack.
-		//6. If a function call would result in it recuring more than allowed, then a recursion error is thrown.
-	//These restrictions exist so that functions always hault.
-	//pattern 'r :: ' :
-		//This is the recursion pattern.
-		//'r' is a single expression.
-			//e.g.
-				//For example This can be a pair of brackets or a single value or parameter.
-				1 :: (a>a a)(a> a a)
-				(1) :: (a>a a)(a> a a)
-				x> x :: (a>a a)(a> a a)
-		//Expression 'r' is converted to an integer.
-		//'r' represents the maximum amount of times code after it is allowed to recur.
-		//By default 'r' == 1
-			//e.g.
-			(a> a a)
-			//is the same as
-			(1 :: (a> a a)) //note: the 'extra brackets are needed to prevent the pattern '
-		//if 'r' isn't a number then the value is converted into a number.
-			//This is done by calling the lambda with an increment function and the number 0.
-			//This is used since it converts church numerals into Integer values.
-			//e.g.
-				(a> (inc>zero>inc(inc(0)))::a a)
-			//If after this the result still isn't an integer value, then it returns 0 and the lambda won't be called.
-	//pattern 'r :: a >'
-		//Here 'a' and 'r' are parameters in the same function.
-		//'a' is the normal function.
-		//'r' is the recursion value passed in. If no 'a::r' pattern was used to call the function, then it returns then 'r' would be '1'. 1 is the default max recursion.
-		//Note that 'r' is not the actuall max recursion of the function but is the value number gotten from the 
-	//e.g.
-		(//factorial
-			(multiply> is0> Y_ish> increment> decrement>
-				n>
-					(Y_ish factorial>
-						//main funtion starts here
-						n>
-							is0 n 
-								1
-								multiply n (factorial factorial n::(decrement n))
-					)n
-			)
-			//set up constants
-			(a>b> f>x> a (b f) x) //multiply
-			(n> n (λ λλ$0)(λλ$1)) //'is0' aka 'x == 0'
-			(a> a a) //Y_ish combinator
-			(n> f>x> f(n f x)) //increment
-			(n> f>x> n(a> b> b (a f)) (a> x) (a> a)) //decrement
-		)
-//return/break '<' :
-	//patterns '<a' and '<$3':
-		//returns to the scope of the orresponding parameter.
-		//It returns the value of the expression before it. To that scope.
-		//It can be used to break out of functions early
-		//If a return pattern is used as an argument it is triggered and it returns.
-		//e.g.
-			a> (b> a) a
-			//is the same as
-			a> (b> a <a) a
-			//is the same as
-			a> (b> a <a$0) a
-				//or
-				a> (b> a<b$0 ) a //since the function returns after this point anyway.  
-			//is the same as
-			λ (λ $1 <$1) $0
-			//is the same as
-			λ λ $1 <$1 $0
-	//pattern '<a$3':
-		//same as '<a' except it continues to go out '$3' number of times.
-		//One use for this is returning from a lambda function entirly
-		//e.g.
-		a> 5 (x>3<a$1) a>a //always returns 3 
-	//exception: if the scope being returned to is not on the stack then a return "statement" will return from the lambda expression.
-		//i.e. The return operator will turn into a '<$1'.
-		//e.g.
-			λλ 1 <$2
-	//e.g.
-		o > o o :: o o < o //This specific example is here for artistic purpouses. However, it is also syntacticly correct.
 //assignment '=' , '()' , ',' :
 	//',' :
 		//',' can be used to group things similar to '()'.
@@ -402,15 +316,8 @@
 				add = a>b>f>x> (a f, b f x),
 				pow = a>b>b a,
 			)
-//equallity '==' , '===' :
-	//'==' :
-		//checks if 2 lambdas as combinators are the same. Also checks types
-		is0 = n>n==0,
-	//'===': checks if 2 lambdas are the same reference.
-	//can be used to check to see where a lambda comes from.
-
-//assignment types '<=>' '.' :
-	//Operator choices '<=' '<=>' '=>':
+//assignment types '<=>' :
+	//Operator choices '<=' '<=>' '=>' :
 		//These are a list of notes to help remember which operator does what.
 		//The '=>' arrows point towards the value that is added to the blocks return value.
 
@@ -422,95 +329,6 @@
 			(a => 2)
 			//is the same as
 			(a = 2, a)
-	//'.' dot operator
-		//Gets property or index.
-		//patterns '.b' and '.( )'
-			//- takes in the expression on the left and returns a function that returns.
-			//- If a property does not exist then the empty context '()' is returned.
-			//- If a literal word is passed used '.b' then the word is turned into a string literal.
-			//- Other than word literals, any short, single expression can be passed as a property in the dot operator.
-		//assigning properties: 'a.b=' '(...).b='
-			//When a property is assigned to, the change only applies within the scope.
-			//This prevents side-effects.
-			//patterns 'a.b.c=' and '(a).b.c='
-				//if the root object (the 'a' in 'a.b.c=') is a named label (e.g. 'a' or '+'), then that label is reassigned.
-					//e.g.
-						a = (b <= (c <= 1, c1 <= 2), b1 <= 2),
-						(
-							(
-								a . b . c = 2,
-								a,
-							)
-							//is the same as
-							(
-								a = (a, b <= (a . b, c <= 2)),
-								a,
-							)
-						)
-				//otherwise the reassignment is not done and a new modified object is returned
-					//e.g.
-						a = (b <= (c <= 1, c1 <= 2), b1 <= 2),
-						(
-							(//note: brackets arn't nesesarilly needed for this pattern, they are however, a simple way for the root object to not be a direct named label.
-								(a>a, a) . b . c = 2,
-							)
-							//is the same as
-							(
-								((a>a, a), b <= (a . b, c <= 2)),
-							)
-						)
-				//note:
-					//e.g.
-						a>
-							(a.b.c=2,a)
-							//returns the same value as
-							((a).b.c=2)
-			//e.g.
-				(
-					(
-						(
-							(a) . b . c = 2,
-							a,
-						)
-						//is the same as
-						(
-							a = (a, b <= (a . b, c <= 2)),
-							a,
-						)
-					)
-				)
-				//is the same as
-				(
-					a = (b<=(c<=1,c1<=2),b1<=2),
-				)
-
-		//pattern '.b' or '.2' :
-			//
-			//pseudocode code for dot operator
-				//e.g.
-					(b<=2).b,//returns 2
-					//is the same as
-					(.) (b<=2) "b",
-					//goes to the pseudocode
-					getProperty (b<=2) "b",
-			//can also be used for indexes
-				[11 22 33].1 //2
-		//pattern '.[ ]' :
-			//Used for indexing arrays
-				//e.g.
-					number = 2,
-					[11 22 33].[number],// 33
-					getArrayIndex = array>index>array.[index],
-			//Using the '.[ ]' pattern, the property can be decided when it is evaluated.
-				//e.g.
-					getProperty = obj>name>obj.[name],
-					setProperty = obj>name>value>(obj,obj.[name]<=value),
-			//Can also be used to make hidden properties that can only be referenced with the same lambda or object reference :
-				//e.g.
-					hideProperty = obj>value>(obj.[key] = )
-			//The code inside '.[ ]' is a normal scope and not an array scope
-				//e.g.
-					[1 2 3 4 5].[2 2]//returns '5' since '(2 2)' == '4'
 	//'<=' define public label
 		//e.g.
 			obj = (a<=2),
@@ -524,98 +342,6 @@
 		//e.g.
 			two = number <=> 2,
 			twoSquared = two two.number,
-//floats '0.0' :
-	//Can use decimal literals:
-		//e.g.
-			1.3
-			1.4
-			0xa3.fa
-	//If used as a function they are rounded down and are used as iterators, just like integers.
-		//negative numbers become 0
-		//e.g.
-			f > x > 2.3 f x
-			//is the same as
-			f > x > 2 f x
-		//e.g.
-			f > x > -2.3 f x
-			//is the same as
-			f > x > 0 f x
-	//floats have methods for doing calculations with them
-		//methods:
-			0.0.+
-			0.0.-
-			0.0.*
-			0.0./
-			0.0.**
-			0.0.atan2
-			0.0.clamp
-		//properties
-			0.0.++
-			0.0.--
-			0.0.sin
-			0.0.cos
-			0.0.tan
-			0.0.asin
-			0.0.acos
-			0.0.atan
-			0.0.exp
-		//constants
-			0.0.prototype//contains all the operations as raw functions.
-		//e.g.
-			1.0.+ 4.2,
-			
-	//Converting the following values into integers will return 0:
-		//Infinity,
-		//-Infinity,
-		//NaN,
-		//-0,
-		//+0,
-	//Allows for doing calculations with negative and non-integer numbers.
-	//e.g.
-//objects '{}' :
-	//'{}' can be used for grouping values into existing single expressions
-	//pattern '{a}' :
-		//Unlike '()' The first label in a expression is not used as a function.
-			//Instead, by default, labels are used as public property names.
-			//The property takes on the value of the label with the same name.
-				//e.g.
-					(
-						a = 1, b = 2,
-						(
-							c = 3,
-							{a b c},
-						)
-					)
-					//is the same as
-					(
-						a = 1, b = 2,
-						(
-							c = 3,
-							(a<=a, b<=b, c<=c),
-						)
-					)
-	//Apart from this exp they act just like a '()' block.
-	//e.g.
-		(
-			A = 1, B = 2, C = 3,
-			{A B C},
-		),
-		(
-			obj = {a<=4,b<=5,c<=6},
-			obj . a,//4
-			obj . b,//5
-		),
-		{1 2 3} . [2 1],
-		(
-			Number = int>{number<=int,()},
-		),
-//a functional OOP :
-	//Can be used for OOP
-	//Objects are still imutable.
-	//Mutating an object returns the same object with the mutated value
-	//inheritence:
-		//
-	//pollymorphism:
 //operators:
 	//symbols
 		+ - * / ** %
@@ -626,6 +352,13 @@
 		&& || ^^
 		<- -> (<->)
 		(>) (<) (=) (==)
+	
+	//equallity '==' , '===' :
+		//'==' :
+			//checks if 2 lambdas as combinators are the same. Also checks types
+			is0 = n>n==0,
+		//'===': checks if 2 lambdas are the same reference.
+		//can be used to check to see where a lambda comes from.
 	//note that the raw, normal functions can be obtained by putting symbols in brackets on their own.
 		//This may be done to use symbols such as '>' as an operator instead of a lambda declaration.
 		//This may also be done to use operaters as normal functions
@@ -677,20 +410,18 @@
 	//pattern '[ ]' :
 		//Works similar to a '()' block except the first expression isn't used as a function.
 		//Instead all expressions are joined together into an array.
-			
-		//Calling array as a function converts the argumnet into an array (calling 'arg.toArray ()') then concatnates the 2 arrays
-			//e.g.
-				[] (a>a) 2 3
-				//returns
-				[(a>a) 2 3]
-			//e.g.
-				[1 2] [3 4]
-				//returns
-				[1 2 3 4]
-			//e.g.
-				[1 2] [[3 4] 5]
-				//returns
-				[1 2 [3 4] 5]
+	//implementation :
+		[11 22 33]
+		//is the same as the pure lambda function
+		endOfList > bool > bool 11 bool > bool 22 bool > bool 33 endOfList
+		//However '[ ]' has the array type and can be optimised more by the compiler.
+	//concatnation
+		//Arrays can be combined by using '*'.
+		//This is because '*' can be written as 'a>b>f>a (f b)' which can concatnate this array type
+		//e.g.
+			[1 2] * [3 4]
+			//returns
+			[1 2 3 4]
 	//indexing:
 		//can use 'array.number' or 'array.[label]'. This is the same system used for retreaving properties from objects.
 		[11 22 33].1 //22
@@ -702,8 +433,8 @@
 	//e.g.
 		[1 2 3]
 		[1 [2 3] 4]
-		[1] [2] [3]
-		push = array > item > newArray => array [item],
+		[1] * [2] * [3]
+		push = array > item > newArray => array * [item],
 //meta&non-meta '#' '@' '""' '[]' :
 	//pattern '# ... ;' , '#( ... )' , '(# ...)':
 		//end with a ';', an appropriate closing bracket or contains a single bracket.
@@ -758,21 +489,18 @@
 		//split
 		//splice
 		//flat
-//array/object parameters '[ ]>' '{ }>' :
+//array/object parameters '[ ]>' :
 	//pattern '[a b c]>'
 		//e.g.
 			[1 2 3].map [v i]>i v,
 			//is the same as
 			[1 2 3].map a>a.1 a.0,
 			([a b]> a b) [1 2 3],
-	//pattern '{a b c}>'
-		//e.g.
-			({a}>a a) {a=2,b=3}
 	//allows a function to take in parameters from an array or object
 	//This functionality could be done without using this syntax
 		//e.g.
 			[1 2 3].map (a>(v>i>i v)a[0] a[1]),
-//array/object assignment '[ ]=' '{ }=' :
+//array/object assignment '[ ]=' :
 	//pattern '[a b] = '
 		//e.g.
 			[a b] = [1 3],
@@ -789,17 +517,11 @@
 				//is the same as
 				[a b] = [1 2 3],[a b],
 			)
-			(
-				{a b} => (a<=1,b<=2,c<=3)
-				//is the same as
-				{a b} = (a<=1,b<=2,c<=3),{a b},
-			)
 	//assigns multiple labels at once.
 	//In the case where the appropriate datatype is not provided, or the properties/indexes don't exist on the array/object, then the labels are assigned the null value '()' aka empty context.
 		//e.g.
 		[a] = [],//a == ()
 		[a] = (a>a),//a == ()
-		{a b} =(a<=1,b=2),//b == ()
 	//e.g.
 		[a b] = [1 3].map [v]>f>x>f(v f x),
 //reassignment '.='
@@ -818,7 +540,7 @@
 	//This can be done with the other assignment patterns such as: '[ ]=' , '{ }=' , '=>' and '<=>'
 		//e.g.
 		a>b>  [a b].=> [x0 x1]>x0+x1
-//using & with '( )>' '( )=':
+//using & with '( )>' '( )=' :
 	//using '( )>' :
 		//this pattern takes in a list of label refences on the left and an expression on the right.
 		//This pattern does not change how the code functions, only allows for performance gains and can throw errors from undefined labels.
@@ -906,6 +628,11 @@
 		//note: It may be useful to use both a '( )>' followed by a '()='
 			//e.g.
 				(state)>(state)=
+
+//type system & properties '{ }' :
+	//tuples '{ }' :
+	//{} marks a struct. it contains a list of labels that represent item numbers in a tuple.
+
 //type annotations ':' :
 	//using ':' symbol
 	//Can be put a type annotation infront of a pattern to make sure labels and expressions have sertain types.
@@ -958,7 +685,7 @@
 	(1 2 3), //normal block
 	[1 2 3], //array block
 	{a=1,b=2,c=3} //object block
-//inbuilt object 'global':
+//inbuilt object 'global' :
 	//'global' is an object that contains things that allow the language to interact with other systems, such as IO, or log to the console.
 	//Here is some pseudocode for a polly-fill of 'global':
 		global ? = {
