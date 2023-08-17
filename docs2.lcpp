@@ -1,0 +1,11 @@
+//This document comments on all the mechanics currently implememted or are being implemented in the compiler
+//symbols
+	//comment
+	/*multiline comment*/
+	"string"
+	123 //number literal
+	() [] {} //brackets
+	\ λ > //lambda function identifiers
+	label
+	//note: white space is only used to differenciate symbols and inside strings. Whitespace is not used for any other syntax.
+//patterns
