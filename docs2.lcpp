@@ -1,4 +1,5 @@
 //This document comments on all the mechanics currently implememted or are being implemented in the compiler
+//The main difference with this language is that it tries to stick to pure lambda calculus extentions more, only allowing things that can be translated into pure, regular lambda calculus.
 //symbols
 	//comment
 	/*multiline comment*/
@@ -8,4 +9,67 @@
 	\ λ > //lambda function identifiers
 	label
 	//note: white space is only used to differenciate symbols and inside strings. Whitespace is not used for any other syntax.
+	:: :
 //patterns
+	//parameters
+		[a b]>
+		[a,b]>
+		//can be separated by commas or spaces
+	//parameter
+		label
+		label:Type
+	//assignment '=' :
+		parameter = code_block,
+	//type system ':' :
+		a:2
+		a:b
+	//blocks '()' '[]' '{}' :
+		() //code block
+		[] //array
+		{} //tuple
+		//code block '()' :
+
+		//array '[]' :
+			//Linked list data type.
+			//Since in this form empty arrays are not possible, the '[]' on it's own can used as part of other syntax patterns, userally representing an array Type annotation.
+
+			//pollyfill
+				//e.g.
+					(tripple> tripple false item restOfList etc... (tripple> tripple true item lastItem))
+		//tuple '{}' :
+			//e.g.
+				a> b> {a a b}
+				//is the same as
+				a>b> tupleIndexForlength3> tupleIndexForlength3 a a b
+				//where
+				tupleIndexForlength3:a>b>c>(a|b|c)
+			//pollyfill
+				//e.g.
+					tuple1 = (a>a item1 item2 item3),
+					ans1 = tuple1 (a>b>c>b),
+					ans2 = tuple1,
+	//note: empty 
+	//selecter pattern '::'
+		//used to index arrays and expecially tuples
+		//syntax:
+			//takes in an optional typed object with an iterator function, or a number literal on the left and a number literal or a single expression on the right.
+			operator"::" : int|{operator "::"}
+			tupleLength::index,//selects an item from a tuple of a known size
+			//or
+			(::index),//the length of the tuple is infered, or indexes an array
+			//or
+			object_with_type_tuple::index,
+			//or
+			object_with_type_tuple
+			[]::index,//index for an array of any size
+			{}::index
+		//polly fill
+			//e.g.
+				3::1
+				//is the same as
+				item0>item1>item2>item1
+			//
+				length>index>
+		//e.g.
+			[1 2 3]::1 //
+			{2 4 6}::
